@@ -22,6 +22,8 @@ const PatientsPage = () => {
   const [isAdmin, setIsAdmin] = useState(false);
   const [doctorFilter, setDoctorFilter] = useState('all');
   const [doctorList, setDoctorList] = useState([]);
+  const [insuranceFilter, setInsuranceFilter] = useState('all');
+  const [insuranceList, setInsuranceList] = useState([]);
   const [formData, setFormData] = useState({
     name: '', age: '', cedula: '', nationality: '', address: '', occupation: '', phone: '', insurance_name: '', insurance_number: '', medical_history: '',
   });
@@ -42,6 +44,13 @@ const PatientsPage = () => {
     if (doctorFilter !== 'all') {
       result = result.filter((p) => p.doctor_id === doctorFilter);
     }
+    if (insuranceFilter !== 'all') {
+      if (insuranceFilter === 'none') {
+        result = result.filter((p) => !p.insurance_name);
+      } else {
+        result = result.filter((p) => p.insurance_name === insuranceFilter);
+      }
+    }
     if (searchQuery) {
       result = result.filter(
         (p) =>
@@ -50,7 +59,7 @@ const PatientsPage = () => {
       );
     }
     setFilteredPatients(result);
-  }, [searchQuery, patients, doctorFilter, searchMode]);
+  }, [searchQuery, patients, doctorFilter, insuranceFilter, searchMode]);
 
   // Advanced search (diagnosis/consultation - server side) with debounce
   const doAdvancedSearch = useCallback(async (query) => {
@@ -64,6 +73,13 @@ const PatientsPage = () => {
       let filtered = results;
       if (doctorFilter !== 'all') {
         filtered = filtered.filter((p) => p.doctor_id === doctorFilter);
+      }
+      if (insuranceFilter !== 'all') {
+        if (insuranceFilter === 'none') {
+          filtered = filtered.filter((p) => !p.insurance_name);
+        } else {
+          filtered = filtered.filter((p) => p.insurance_name === insuranceFilter);
+        }
       }
       setFilteredPatients(filtered);
     } catch (error) {
@@ -94,6 +110,14 @@ const PatientsPage = () => {
         }
       });
       setDoctorList(Object.entries(doctors).map(([id, name]) => ({ id, name })));
+      // Extract unique insurance providers for the filter
+      const insurances = new Set();
+      data.forEach((p) => {
+        if (p.insurance_name) {
+          insurances.add(p.insurance_name);
+        }
+      });
+      setInsuranceList(Array.from(insurances).sort());
     } catch (error) {
       toast.error('Error al cargar pacientes');
     } finally {
@@ -254,6 +278,20 @@ const PatientsPage = () => {
               </select>
             </div>
           )}
+          <div className="flex items-center gap-2">
+            <select
+              data-testid="insurance-filter-select"
+              value={insuranceFilter}
+              onChange={(e) => setInsuranceFilter(e.target.value)}
+              className="h-14 rounded-xl bg-white border border-border px-4 shadow-card text-sm min-w-[180px]"
+            >
+              <option value="all">Todos los seguros</option>
+              <option value="none">Sin seguro</option>
+              {insuranceList.map((ins) => (
+                <option key={ins} value={ins}>{ins}</option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 
@@ -262,7 +300,7 @@ const PatientsPage = () => {
           <CardContent className="py-16 text-center">
             <User className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
             <p className="text-muted-foreground">
-              {searchQuery || doctorFilter !== 'all' ? 'No se encontraron pacientes' : 'No hay pacientes aún'}
+              {searchQuery || doctorFilter !== 'all' || insuranceFilter !== 'all' ? 'No se encontraron pacientes' : 'No hay pacientes aún'}
             </p>
           </CardContent>
         </Card>
@@ -295,8 +333,13 @@ const PatientsPage = () => {
                     <p>Cédula: {patient.cedula}</p>
                     <p>Edad: {patient.age} años</p>
                     <p>Teléfono: {patient.phone}</p>
+                    {patient.insurance_name && (
+                      <p className="text-xs mt-2 px-2 py-1 bg-secondary/10 text-secondary rounded-lg inline-block">
+                        {patient.insurance_name}
+                      </p>
+                    )}
                     {isAdmin && patient.doctor_name && (
-                      <p className="text-xs mt-2 px-2 py-1 bg-primary/5 rounded-lg inline-block">
+                      <p className="text-xs mt-2 ml-1 px-2 py-1 bg-primary/5 rounded-lg inline-block">
                         {patient.doctor_name}
                       </p>
                     )}
