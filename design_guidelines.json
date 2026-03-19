@@ -1,0 +1,195 @@
+{
+  "project_name": "Arandu Clinic - Portal Médico",
+  "design_philosophy": {
+    "concept": "The Restoration Studio",
+    "description": "Traumatology is about structure and repair. The interface should feel like a craftsman's workshop: warm, structural, and organized. We reject the 'Clinical Blue' cliche in favor of 'Healing Earth' tones.",
+    "core_values": [
+      "Warmth over Sterility",
+      "Structure over Decoration",
+      "Human over Metric"
+    ],
+    "mood": "Calm, Professional, Accessible, Restoration"
+  },
+  "typography": {
+    "headings": {
+      "family": "Manrope, sans-serif",
+      "weights": [
+        600,
+        700,
+        800
+      ],
+      "usage": "Use for all page titles, card headers, and major metrics.",
+      "letterSpacing": "tracking-tight"
+    },
+    "body": {
+      "family": "Inter, sans-serif",
+      "weights": [
+        400,
+        500
+      ],
+      "usage": "Use for patient notes, data tables, and forms.",
+      "letterSpacing": "tracking-normal"
+    },
+    "mono": {
+      "family": "JetBrains Mono, monospace",
+      "usage": "Use for ID numbers, medical codes, and dosage metrics."
+    },
+    "scale": {
+      "h1": "text-4xl md:text-5xl font-bold tracking-tight text-charcoal-900",
+      "h2": "text-3xl font-bold tracking-tight text-charcoal-800",
+      "h3": "text-2xl font-semibold text-charcoal-800",
+      "p": "text-base text-charcoal-600 leading-relaxed",
+      "small": "text-sm text-charcoal-500"
+    }
+  },
+  "colors": {
+    "palette": {
+      "primary": {
+        "name": "Healing Clay",
+        "50": "#fbf7f6",
+        "100": "#f5ede9",
+        "200": "#ebd9d2",
+        "300": "#dec5bb",
+        "400": "#d0ad9f",
+        "500": "#D97757",
+        "600": "#b85c3f",
+        "700": "#96462e",
+        "800": "#783624",
+        "900": "#632d20",
+        "DEFAULT": "#D97757"
+      },
+      "secondary": {
+        "name": "Restoration Sage",
+        "DEFAULT": "#4B7F52",
+        "foreground": "#FFFFFF"
+      },
+      "background": {
+        "DEFAULT": "#FDFCF8",
+        "paper": "#FDFCF8",
+        "subtle": "#F5F2EB"
+      },
+      "text": {
+        "DEFAULT": "#2D2A26",
+        "muted": "#787570"
+      },
+      "accent": {
+        "DEFAULT": "#F2C94C",
+        "foreground": "#2D2A26"
+      },
+      "destructive": {
+        "DEFAULT": "#E05252",
+        "foreground": "#FFFFFF"
+      }
+    },
+    "usage_rules": {
+      "backgrounds": "Never use pure white (#FFFFFF) for main backgrounds. Use 'Bone White' (#FDFCF8).",
+      "surfaces": "Use 'Warm Sand' (#F5F2EB) for sidebars and secondary cards.",
+      "gradients": "Avoid gradients. Use solid, matte colors.",
+      "borders": "Use subtle warm borders (#E5E0D6) instead of grey."
+    }
+  },
+  "visual_enhancers": {
+    "radius": {
+      "default": "rounded-2xl",
+      "cards": "rounded-2xl",
+      "buttons": "rounded-full",
+      "inputs": "rounded-xl"
+    },
+    "shadows": {
+      "card": "shadow-[0_2px_8px_rgba(45,42,38,0.04)]",
+      "hover": "shadow-[0_8px_16px_rgba(45,42,38,0.08)]",
+      "popover": "shadow-[0_12px_32px_rgba(45,42,38,0.12)]"
+    },
+    "textures": {
+      "noise": "Add a 2% noise texture to the background to simulate paper/craft."
+    }
+  },
+  "layout_strategies": {
+    "dashboard_grid": {
+      "type": "Bento Grid",
+      "columns": "grid-cols-1 md:grid-cols-12",
+      "gap": "gap-6",
+      "structure": [
+        {
+          "slot": "Hero/Welcome",
+          "span": "col-span-12 md:col-span-8",
+          "content": "Doctor greeting, quick stats, next patient"
+        },
+        {
+          "slot": "Quick Actions",
+          "span": "col-span-12 md:col-span-4",
+          "content": "Add Patient, Upload X-Ray"
+        },
+        {
+          "slot": "Recent Patients List",
+          "span": "col-span-12 md:col-span-8 row-span-2",
+          "content": "Table with avatars, status, last visit"
+        },
+        {
+          "slot": "Calendar/Schedule",
+          "span": "col-span-12 md:col-span-4 row-span-2",
+          "content": "Vertical timeline of today's appointments"
+        }
+      ]
+    },
+    "patient_profile": {
+      "layout": "Two Column Asymmetric",
+      "left_col": "w-full md:w-1/3 (Personal Info, Avatar, Vitals)",
+      "right_col": "w-full md:w-2/3 (History Timeline, X-Ray Gallery, Evolution Notes)"
+    }
+  },
+  "components": {
+    "buttons": {
+      "style": "Pill shaped (rounded-full)",
+      "primary": "bg-primary text-white hover:bg-primary/90 shadow-md transition-transform hover:scale-[1.02]",
+      "secondary": "bg-background-subtle text-charcoal-800 hover:bg-background-subtle/80 border border-border"
+    },
+    "cards": {
+      "style": "Flat with subtle border, no heavy shadow",
+      "classes": "bg-white border border-[#E5E0D6] rounded-2xl p-6"
+    },
+    "inputs": {
+      "style": "Warm background, large text",
+      "classes": "bg-[#FAF9F6] border-[#E5E0D6] focus:border-primary focus:ring-primary/20 rounded-xl h-12"
+    },
+    "status_badges": {
+      "active": "bg-emerald-100 text-emerald-800 border-emerald-200",
+      "pending": "bg-amber-100 text-amber-800 border-amber-200",
+      "critical": "bg-rose-100 text-rose-800 border-rose-200",
+      "style": "rounded-full px-3 py-1 text-xs font-semibold border"
+    }
+  },
+  "assets": {
+    "images": {
+      "doctor_avatar": "https://images.unsplash.com/photo-1645066928295-2506defde470?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxOTJ8MHwxfHNlYXJjaHwxfHxmcmllbmRseSUyMGRvY3RvciUyMHBvcnRyYWl0JTIwcHJvZmVzc2lvbmFsfGVufDB8fHx8MTc3MzU3OTAwNnww&ixlib=rb-4.1.0&q=85",
+      "patient_avatars": [
+        "https://images.unsplash.com/photo-1671718648167-6b209c182480?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2NDJ8MHwxfHNlYXJjaHwzfHxkaXZlcnNlJTIwcGF0aWVudHMlMjBwb3J0cmFpdHMlMjBzbWlsaW5nfGVufDB8fHx8MTc3MzU3OTAwNnww&ixlib=rb-4.1.0&q=85",
+        "https://images.unsplash.com/photo-1752084794888-0b27a762b6fd?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2NDJ8MHwxfHNlYXJjaHwxfHxkaXZlcnNlJTIwcGF0aWVudHMlMjBwb3J0cmFpdHMlMjBzbWlsaW5nfGVufDB8fHx8MTc3MzU3OTAwNnww&ixlib=rb-4.1.0&q=85",
+        "https://images.unsplash.com/photo-1658288098101-84f074c292a8?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2NDJ8MHwxfHNlYXJjaHwyfHxkaXZlcnNlJTIwcGF0aWVudHMlMjBwb3J0cmFpdHMlMjBzbWlsaW5nfGVufDB8fHx8MTc3MzU3OTAwNnww&ixlib=rb-4.1.0&q=85"
+      ],
+      "xrays": [
+        "https://images.unsplash.com/photo-1748712308129-1d200044113d?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA0MTJ8MHwxfHNlYXJjaHwxfHx4cmF5JTIwYm9uZXMlMjBtZWRpY2FsJTIwc2NhbnxlbnwwfHx8fDE3NzM1NzkwMDV8MA&ixlib=rb-4.1.0&q=85",
+        "https://images.unsplash.com/photo-1648025487735-2ca48d72c449?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA0MTJ8MHwxfHNlYXJjaHwzfHx4cmF5JTIwYm9uZXMlMjBtZWRpY2FsJTIwc2NhbnxlbnwwfHx8fDE3NzM1NzkwMDV8MA&ixlib=rb-4.1.0&q=85",
+        "https://images.unsplash.com/photo-1650562373852-04c5682ec2e7?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA0MTJ8MHwxfHNlYXJjaHwyfHx4cmF5JTIwYm9uZXMlMjBtZWRpY2FsJTIwc2NhbnxlbnwwfHx8fDE3NzM1NzkwMDV8MA&ixlib=rb-4.1.0&q=85"
+      ]
+    },
+    "icons": "Use 'Lucide-React'. Preferred icons: Activity, Bone, Calendar, User, FileText, ClipboardList."
+  },
+  "instructions_to_main_agent": [
+    "INSTALL FONTS: Add '@fontsource/manrope' and '@fontsource/inter' immediately.",
+    "THEME SETUP: Configure tailwind.config.js with the provided 'Healing Clay' and 'Bone' colors. Do NOT use the default shadcn slate/zinc colors.",
+    "COMPONENT OVERRIDE: Modify Shadcn components to use 'rounded-2xl' and 'rounded-full'. Avoid sharp edges.",
+    "LAYOUT: Use the 'Bento Grid' strategy for the dashboard. Do not create a generic list view.",
+    "ACCESSIBILITY: Ensure text contrast on the 'Healing Clay' buttons is sufficient (use white text).",
+    "DATA-TESTID: Add 'data-testid' to all interactive elements (buttons, inputs, cards).",
+    "NO GRADIENTS: Stick to solid, warm, earthy tones.",
+    "GLASSMORPHISM: Use subtle glass effects (bg-white/70 backdrop-blur-md) only for sticky headers, not for content cards."
+  ],
+  "universal_guidelines": [
+    "Do not use generic centered layouts.",
+    "Create depth through layered design elements.",
+    "Every interaction needs micro-animations.",
+    "Use 2-3x more spacing than feels comfortable.",
+    "Add data-testid to all interactive elements."
+  ]
+}
