@@ -22,6 +22,15 @@ Aplicación universal de gestión de pacientes para clínicas médicas. Cada doc
 - [x] Log de Actividad con página dedicada
 - [x] Búsqueda avanzada por diagnóstico/consulta/tratamiento
 - [x] App genérica (sin referencias a traumatología, cualquier especialidad)
+- [x] Campos adicionales paciente: nacionalidad, nombre de seguro, número de carnet (2026-03-19)
+- [x] Cambio de título "Dashboard" a "Panel Principal" (2026-03-19)
+- [x] Filtro de pacientes por tipo de seguro médico (2026-03-19)
+- [x] Visualización del seguro en tarjetas de pacientes (2026-03-19)
 
 ## Credenciales Test
 - Admin: jose@aranduinformatica.net / secreto
+- Demo: demo@arandu.com / demo123
+
+## Próximas Mejoras
+- Reportes de pacientes por tipo de seguro
+- Notificaciones de citas próximas
