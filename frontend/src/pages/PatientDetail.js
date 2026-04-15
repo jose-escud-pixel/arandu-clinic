@@ -10,7 +10,7 @@ import { Badge } from '../components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { api } from '../lib/api';
 import { toast } from 'sonner';
-import { ArrowLeft, Edit, Plus, Calendar, FileText, Image as ImageIcon, Download, Upload, Printer, Trash2 } from 'lucide-react';
+import { ArrowLeft, Edit, Plus, Calendar, FileText, Image as ImageIcon, Download, Upload, Printer, Trash2, Search, X, ExternalLink, ClipboardList } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 
@@ -41,17 +41,29 @@ const PatientDetail = () => {
   const [prescriptionForm, setPrescriptionForm] = useState({ medications: '', instructions: '', diagnosis: '' });
   const [editingId, setEditingId] = useState(null);
 
+  // Medical History Entries
+  const [medicalHistory, setMedicalHistory] = useState([]);
+  const [historySearch, setHistorySearch] = useState('');
+  const [showHistoryDialog, setShowHistoryDialog] = useState(false);
+  const [showEditHistoryDialog, setShowEditHistoryDialog] = useState(false);
+  const [historyForm, setHistoryForm] = useState({ category: 'otro', description: '', date: '' });
+  const [editingHistoryId, setEditingHistoryId] = useState(null);
+
+  // Consultation search
+  const [consultationSearch, setConsultationSearch] = useState('');
+
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadData(); }, [patientId]);
 
   const loadData = async () => {
     try {
-      const [patientData, consultationsData, appointmentsData, filesData, prescriptionsData] = await Promise.all([
+      const [patientData, consultationsData, appointmentsData, filesData, prescriptionsData, historyData] = await Promise.all([
         api.patients.getById(patientId),
         api.consultations.getByPatient(patientId),
         api.appointments.getByPatient(patientId),
         api.files.getByPatient(patientId),
         api.prescriptions.getByPatient(patientId),
+        api.medicalHistory.getByPatient(patientId),
       ]);
       setPatient(patientData);
       setEditForm(patientData);
@@ -59,6 +71,7 @@ const PatientDetail = () => {
       setAppointments(appointmentsData);
       setFiles(filesData);
       setPrescriptions(prescriptionsData);
+      setMedicalHistory(historyData);
     } catch (error) {
       toast.error('Error al cargar datos del paciente');
     } finally {
@@ -74,6 +87,59 @@ const PatientDetail = () => {
       setShowEditDialog(false);
       loadData();
     } catch (error) { toast.error('Error al actualizar paciente'); }
+  };
+
+  // --- Medical History Handlers ---
+  const HISTORY_CATEGORIES = [
+    { value: 'patologia_cronica', label: 'Patología Crónica', color: 'bg-red-100 text-red-700 border-red-200' },
+    { value: 'alergia', label: 'Alergia', color: 'bg-orange-100 text-orange-700 border-orange-200' },
+    { value: 'cirugia', label: 'Cirugía', color: 'bg-purple-100 text-purple-700 border-purple-200' },
+    { value: 'medicacion', label: 'Medicación Habitual', color: 'bg-blue-100 text-blue-700 border-blue-200' },
+    { value: 'antecedente_familiar', label: 'Antecedente Familiar', color: 'bg-green-100 text-green-700 border-green-200' },
+    { value: 'otro', label: 'Otro', color: 'bg-gray-100 text-gray-600 border-gray-200' },
+  ];
+
+  const getCategoryStyle = (cat) => {
+    const found = HISTORY_CATEGORIES.find(c => c.value === cat);
+    return found ? found.color : 'bg-gray-100 text-gray-600 border-gray-200';
+  };
+
+  const getCategoryLabel = (cat) => {
+    const found = HISTORY_CATEGORIES.find(c => c.value === cat);
+    return found ? found.label : 'Otro';
+  };
+
+  const handleCreateHistoryEntry = async (e) => {
+    e.preventDefault();
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      await api.medicalHistory.create(patientId, { ...historyForm, date: historyForm.date || today });
+      toast.success('Antecedente registrado');
+      setShowHistoryDialog(false);
+      setHistoryForm({ category: 'otro', description: '', date: '' });
+      const updated = await api.medicalHistory.getByPatient(patientId);
+      setMedicalHistory(updated);
+    } catch (error) { toast.error('Error al registrar antecedente'); }
+  };
+
+  const handleEditHistoryEntry = async (e) => {
+    e.preventDefault();
+    try {
+      await api.medicalHistory.update(editingHistoryId, historyForm);
+      toast.success('Antecedente actualizado');
+      setShowEditHistoryDialog(false);
+      setEditingHistoryId(null);
+      const updated = await api.medicalHistory.getByPatient(patientId);
+      setMedicalHistory(updated);
+    } catch (error) { toast.error('Error al actualizar antecedente'); }
+  };
+
+  const handleDeleteHistoryEntry = async (entryId) => {
+    try {
+      await api.medicalHistory.delete(entryId);
+      toast.success('Antecedente eliminado');
+      setMedicalHistory(prev => prev.filter(e => e.id !== entryId));
+    } catch (error) { toast.error('Error al eliminar antecedente'); }
   };
 
   const handleDeletePatient = async () => {
@@ -298,10 +364,6 @@ const PatientDetail = () => {
                 <Input data-testid="edit-insurance-number-input" value={editForm.insurance_number || ''} onChange={(e) => setEditForm({ ...editForm, insurance_number: e.target.value })} placeholder="Número de carnet" className="rounded-xl h-12 bg-[#FAF9F6] border-[#E5E0D6]" />
               </div>
             </div>
-            <div className="space-y-2">
-              <Label>Historial Médico</Label>
-              <Textarea data-testid="edit-history-input" value={editForm.medical_history || ''} onChange={(e) => setEditForm({ ...editForm, medical_history: e.target.value })} rows={4} className="rounded-xl bg-[#FAF9F6] border-[#E5E0D6]" />
-            </div>
             <Button data-testid="save-patient-button" type="submit" className="w-full h-12 rounded-full bg-primary text-white hover:bg-primary/90">Guardar Cambios</Button>
           </form>
         </DialogContent>
@@ -338,8 +400,68 @@ const PatientDetail = () => {
           </CardContent>
         </Card>
         <Card className="md:col-span-2 border-border shadow-card rounded-2xl" data-testid="patient-history-card">
-          <CardHeader><CardTitle className="text-xl font-heading">Historial Médico</CardTitle></CardHeader>
-          <CardContent><p className="text-base text-charcoal-700 leading-relaxed whitespace-pre-wrap">{patient.medical_history}</p></CardContent>
+          <CardHeader>
+            <div className="flex flex-row items-center justify-between">
+              <CardTitle className="text-xl font-heading">Antecedentes Médicos</CardTitle>
+              <Button size="sm" onClick={() => { setHistoryForm({ category: 'otro', description: '', date: '' }); setShowHistoryDialog(true); }} className="rounded-full bg-primary text-white hover:bg-primary/90">
+                <Plus className="w-4 h-4 mr-1" />Agregar
+              </Button>
+            </div>
+            {/* Buscador */}
+            <div className="relative mt-2">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder="Buscar antecedente..."
+                value={historySearch}
+                onChange={e => setHistorySearch(e.target.value)}
+                className="pl-9 pr-8 rounded-xl h-9 bg-[#FAF9F6] border-[#E5E0D6] text-sm"
+              />
+              {historySearch && (
+                <button onClick={() => setHistorySearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-charcoal-700">
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent>
+            {medicalHistory.length === 0 ? (
+              <div className="text-center py-6">
+                <ClipboardList className="w-10 h-10 text-muted-foreground mx-auto mb-2" />
+                <p className="text-muted-foreground text-sm">No hay antecedentes registrados</p>
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                {medicalHistory
+                  .filter(e => !historySearch || e.description.toLowerCase().includes(historySearch.toLowerCase()) || getCategoryLabel(e.category).toLowerCase().includes(historySearch.toLowerCase()))
+                  .map(entry => (
+                    <div key={entry.id} className="flex items-start justify-between gap-2 p-3 bg-muted rounded-xl border border-border">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex flex-wrap items-center gap-2 mb-1">
+                          <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${getCategoryStyle(entry.category)}`}>
+                            {getCategoryLabel(entry.category)}
+                          </span>
+                          <span className="text-xs text-muted-foreground">{entry.date}</span>
+                        </div>
+                        <p className="text-sm text-charcoal-800">{entry.description}</p>
+                      </div>
+                      <div className="flex gap-1 flex-shrink-0">
+                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-charcoal-500 hover:text-primary"
+                          onClick={() => { setEditingHistoryId(entry.id); setHistoryForm({ category: entry.category, description: entry.description, date: entry.date }); setShowEditHistoryDialog(true); }}>
+                          <Edit className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-charcoal-500 hover:text-red-500"
+                          onClick={() => handleDeleteHistoryEntry(entry.id)}>
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                {medicalHistory.filter(e => !historySearch || e.description.toLowerCase().includes(historySearch.toLowerCase()) || getCategoryLabel(e.category).toLowerCase().includes(historySearch.toLowerCase())).length === 0 && (
+                  <p className="text-sm text-muted-foreground text-center py-4">Sin resultados para "{historySearch}"</p>
+                )}
+              </div>
+            )}
+          </CardContent>
         </Card>
       </div>
 
@@ -362,11 +484,33 @@ const PatientDetail = () => {
               </Button>
             </CardHeader>
             <CardContent>
+              {/* Buscador de consultas */}
+              {consultations.length > 0 && (
+                <div className="relative mb-4">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Buscar por diagnóstico, tratamiento o notas..."
+                    value={consultationSearch}
+                    onChange={e => setConsultationSearch(e.target.value)}
+                    className="pl-9 pr-8 rounded-xl h-10 bg-[#FAF9F6] border-[#E5E0D6]"
+                  />
+                  {consultationSearch && (
+                    <button onClick={() => setConsultationSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-charcoal-700">
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              )}
               {consultations.length === 0 ? (
                 <div className="text-center py-8"><FileText className="w-12 h-12 text-muted-foreground mx-auto mb-3" /><p className="text-muted-foreground">No hay consultas registradas</p></div>
               ) : (
                 <div className="space-y-4">
-                  {consultations.map((c) => (
+                  {consultations
+                    .filter(c => !consultationSearch ||
+                      c.diagnosis.toLowerCase().includes(consultationSearch.toLowerCase()) ||
+                      c.treatment.toLowerCase().includes(consultationSearch.toLowerCase()) ||
+                      c.notes.toLowerCase().includes(consultationSearch.toLowerCase()))
+                    .map((c) => (
                     <div key={c.id} data-testid={`consultation-item-${c.id}`} className="p-4 bg-muted rounded-xl border-l-4 border-primary">
                       <div className="flex items-start justify-between mb-2">
                         <p className="text-sm text-muted-foreground">{format(new Date(c.date), "d 'de' MMMM, yyyy - HH:mm", { locale: es })}</p>
@@ -384,6 +528,12 @@ const PatientDetail = () => {
                       <p className="text-sm text-muted-foreground">{c.notes}</p>
                     </div>
                   ))}
+                  {consultationSearch && consultations.filter(c =>
+                    c.diagnosis.toLowerCase().includes(consultationSearch.toLowerCase()) ||
+                    c.treatment.toLowerCase().includes(consultationSearch.toLowerCase()) ||
+                    c.notes.toLowerCase().includes(consultationSearch.toLowerCase())).length === 0 && (
+                    <p className="text-sm text-muted-foreground text-center py-6">Sin resultados para "{consultationSearch}"</p>
+                  )}
                 </div>
               )}
             </CardContent>
@@ -484,29 +634,141 @@ const PatientDetail = () => {
                 <div className="text-center py-8"><ImageIcon className="w-12 h-12 text-muted-foreground mx-auto mb-3" /><p className="text-muted-foreground mb-4">No hay archivos subidos aun</p></div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {files.map((file) => (
-                    <div key={file.id} data-testid={`file-item-${file.id}`} className="p-4 bg-muted rounded-xl border border-border">
-                      <div className="flex items-start justify-between mb-3">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center"><ImageIcon className="w-5 h-5 text-primary" /></div>
-                          <div>
-                            <p className="font-medium text-charcoal-800 text-sm">{file.file_name}</p>
-                            <p className="text-xs text-muted-foreground">{format(new Date(file.created_at), "d 'de' MMMM, yyyy", { locale: es })}</p>
+                  {files.map((file) => {
+                    const isPDF = file.file_type === 'application/pdf';
+                    const isImage = file.file_type?.startsWith('image/');
+                    return (
+                      <div key={file.id} data-testid={`file-item-${file.id}`} className="p-4 bg-muted rounded-xl border border-border">
+                        <div className="flex items-start justify-between mb-3">
+                          <div className="flex items-center gap-3">
+                            <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${isPDF ? 'bg-red-100' : 'bg-primary/10'}`}>
+                              {isPDF
+                                ? <FileText className="w-5 h-5 text-red-500" />
+                                : <ImageIcon className="w-5 h-5 text-primary" />}
+                            </div>
+                            <div>
+                              <p className="font-medium text-charcoal-800 text-sm">{file.file_name}</p>
+                              <p className="text-xs text-muted-foreground">{format(new Date(file.created_at), "d 'de' MMMM, yyyy", { locale: es })}</p>
+                              {isPDF && <span className="text-xs font-medium text-red-500 uppercase">PDF</span>}
+                            </div>
+                          </div>
+                          <div className="flex gap-1">
+                            {(isPDF || isImage) && (
+                              <a href={file.file_url} target="_blank" rel="noopener noreferrer">
+                                <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-charcoal-600 hover:text-primary" title="Abrir archivo">
+                                  <ExternalLink className="w-4 h-4" />
+                                </Button>
+                              </a>
+                            )}
+                            <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-charcoal-600 hover:text-red-500" onClick={() => confirmDelete('file', file.id, file.file_name)}>
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
                           </div>
                         </div>
-                        <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-charcoal-600 hover:text-red-500" onClick={() => confirmDelete('file', file.id, file.file_name)}>
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
+                        {isImage && <img src={file.file_url} alt={file.file_name} className="w-full h-40 object-cover rounded-lg" />}
+                        {isPDF && (
+                          <a href={file.file_url} target="_blank" rel="noopener noreferrer"
+                            className="flex items-center justify-center gap-2 w-full h-20 bg-red-50 border border-red-100 rounded-lg text-red-500 hover:bg-red-100 transition-colors text-sm font-medium">
+                            <FileText className="w-5 h-5" />
+                            Ver PDF
+                          </a>
+                        )}
                       </div>
-                      {file.file_type?.startsWith('image/') && <img src={file.file_url} alt={file.file_name} className="w-full h-40 object-cover rounded-lg" />}
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Create Medical History Entry Dialog */}
+      <Dialog open={showHistoryDialog} onOpenChange={setShowHistoryDialog}>
+        <DialogContent className="sm:max-w-[500px] rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-2xl font-heading">Nuevo Antecedente</DialogTitle>
+            <DialogDescription>Registra un antecedente médico del paciente</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleCreateHistoryEntry} className="space-y-4 mt-4">
+            <div className="space-y-2">
+              <Label>Categoría</Label>
+              <select
+                value={historyForm.category}
+                onChange={e => setHistoryForm({ ...historyForm, category: e.target.value })}
+                className="w-full rounded-xl h-12 px-3 bg-[#FAF9F6] border border-[#E5E0D6] text-sm text-charcoal-800 focus:outline-none focus:ring-2 focus:ring-primary/30">
+                {HISTORY_CATEGORIES.map(cat => (
+                  <option key={cat.value} value={cat.value}>{cat.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <Label>Descripción</Label>
+              <Textarea
+                value={historyForm.description}
+                onChange={e => setHistoryForm({ ...historyForm, description: e.target.value })}
+                required
+                rows={3}
+                placeholder="Ej: Diabetes tipo 2 diagnosticada en 2020"
+                className="rounded-xl bg-[#FAF9F6] border-[#E5E0D6]"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Fecha <span className="text-muted-foreground text-xs">(opcional, por defecto hoy)</span></Label>
+              <Input
+                type="date"
+                value={historyForm.date}
+                onChange={e => setHistoryForm({ ...historyForm, date: e.target.value })}
+                className="rounded-xl h-12 bg-[#FAF9F6] border-[#E5E0D6]"
+              />
+            </div>
+            <Button type="submit" className="w-full h-12 rounded-full bg-primary text-white hover:bg-primary/90">Registrar Antecedente</Button>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Medical History Entry Dialog */}
+      <Dialog open={showEditHistoryDialog} onOpenChange={setShowEditHistoryDialog}>
+        <DialogContent className="sm:max-w-[500px] rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-2xl font-heading">Editar Antecedente</DialogTitle>
+            <DialogDescription>Modifica el antecedente médico</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleEditHistoryEntry} className="space-y-4 mt-4">
+            <div className="space-y-2">
+              <Label>Categoría</Label>
+              <select
+                value={historyForm.category}
+                onChange={e => setHistoryForm({ ...historyForm, category: e.target.value })}
+                className="w-full rounded-xl h-12 px-3 bg-[#FAF9F6] border border-[#E5E0D6] text-sm text-charcoal-800 focus:outline-none focus:ring-2 focus:ring-primary/30">
+                {HISTORY_CATEGORIES.map(cat => (
+                  <option key={cat.value} value={cat.value}>{cat.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <Label>Descripción</Label>
+              <Textarea
+                value={historyForm.description}
+                onChange={e => setHistoryForm({ ...historyForm, description: e.target.value })}
+                required
+                rows={3}
+                className="rounded-xl bg-[#FAF9F6] border-[#E5E0D6]"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Fecha</Label>
+              <Input
+                type="date"
+                value={historyForm.date}
+                onChange={e => setHistoryForm({ ...historyForm, date: e.target.value })}
+                className="rounded-xl h-12 bg-[#FAF9F6] border-[#E5E0D6]"
+              />
+            </div>
+            <Button type="submit" className="w-full h-12 rounded-full bg-primary text-white hover:bg-primary/90">Guardar Cambios</Button>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {/* Create Consultation Dialog */}
       <Dialog open={showConsultationDialog} onOpenChange={setShowConsultationDialog}>

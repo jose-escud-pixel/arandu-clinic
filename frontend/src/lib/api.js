@@ -220,4 +220,22 @@ export const api = {
       return response.data;
     },
   },
+  medicalHistory: {
+    getByPatient: async (patientId) => {
+      const response = await axios.get(`${API}/patients/${patientId}/medical-history`, { headers: getAuthHeader() });
+      return response.data;
+    },
+    create: async (patientId, data) => {
+      const response = await axios.post(`${API}/patients/${patientId}/medical-history`, data, { headers: getAuthHeader() });
+      return response.data;
+    },
+    update: async (entryId, data) => {
+      const response = await axios.put(`${API}/medical-history-entries/${entryId}`, data, { headers: getAuthHeader() });
+      return response.data;
+    },
+    delete: async (entryId) => {
+      const response = await axios.delete(`${API}/medical-history-entries/${entryId}`, { headers: getAuthHeader() });
+      return response.data;
+    },
+  },
 };

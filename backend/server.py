@@ -212,6 +212,26 @@ class PrescriptionUpdate(BaseModel):
     instructions: Optional[str] = None
     diagnosis: Optional[str] = None
 
+class MedicalHistoryEntry(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    patient_id: str
+    doctor_id: str
+    category: str = "otro"
+    description: str
+    date: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class MedicalHistoryEntryCreate(BaseModel):
+    category: str = "otro"
+    description: str
+    date: Optional[str] = None
+
+class MedicalHistoryEntryUpdate(BaseModel):
+    category: Optional[str] = None
+    description: Optional[str] = None
+    date: Optional[str] = None
+
 class AdvancedStats(BaseModel):
     total_patients: int
     appointments_by_month: List[dict]
@@ -615,6 +635,75 @@ async def delete_patient(patient_id: str, doctor: dict = Depends(get_current_doc
         raise HTTPException(status_code=404, detail="Paciente no encontrado")
     await log_activity(doctor['id'], doctor['name'], "delete", "patient", patient_id, f"Paciente eliminado: {patient['name'] if patient else 'N/A'}")
     return {"message": "Paciente eliminado"}
+
+# --- Medical History Entries ---
+@api_router.get("/patients/{patient_id}/medical-history")
+async def get_medical_history(patient_id: str, doctor: dict = Depends(get_current_doctor_full)):
+    is_admin = doctor.get('role') == 'admin'
+    query = {"patient_id": patient_id} if is_admin else {"patient_id": patient_id, "doctor_id": doctor['id']}
+    entries = await db.medical_history_entries.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
+
+    # Auto-migrar desde texto plano si no hay entradas aún
+    if not entries:
+        patient_query = {"id": patient_id} if is_admin else {"id": patient_id, "doctor_id": doctor['id']}
+        patient = await db.patients.find_one(patient_query, {"_id": 0})
+        if patient and patient.get('medical_history', '').strip():
+            today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+            lines = [line.strip() for line in patient['medical_history'].split('\n') if line.strip()]
+            for line in lines:
+                doc = {
+                    "id": str(uuid.uuid4()),
+                    "patient_id": patient_id,
+                    "doctor_id": doctor['id'],
+                    "category": "otro",
+                    "description": line,
+                    "date": today,
+                    "created_at": datetime.now(timezone.utc).isoformat()
+                }
+                await db.medical_history_entries.insert_one(doc)
+            entries = await db.medical_history_entries.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
+
+    for e in entries:
+        if isinstance(e.get('created_at'), datetime):
+            e['created_at'] = e['created_at'].isoformat()
+    return entries
+
+@api_router.post("/patients/{patient_id}/medical-history")
+async def create_medical_history_entry(patient_id: str, input: MedicalHistoryEntryCreate, doctor: dict = Depends(get_current_doctor_full)):
+    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    doc = {
+        "id": str(uuid.uuid4()),
+        "patient_id": patient_id,
+        "doctor_id": doctor['id'],
+        "category": input.category,
+        "description": input.description,
+        "date": input.date or today,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.medical_history_entries.insert_one(doc)
+    await log_activity(doctor['id'], doctor['name'], "create", "medical_history", patient_id, f"Antecedente agregado: {input.description[:60]}")
+    return {k: v for k, v in doc.items() if k != '_id'}
+
+@api_router.put("/medical-history-entries/{entry_id}")
+async def update_medical_history_entry(entry_id: str, input: MedicalHistoryEntryUpdate, doctor: dict = Depends(get_current_doctor_full)):
+    is_admin = doctor.get('role') == 'admin'
+    query = {"id": entry_id} if is_admin else {"id": entry_id, "doctor_id": doctor['id']}
+    update_data = {k: v for k, v in input.model_dump().items() if v is not None}
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No hay datos para actualizar")
+    result = await db.medical_history_entries.update_one(query, {"$set": update_data})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Antecedente no encontrado")
+    return {"message": "Antecedente actualizado"}
+
+@api_router.delete("/medical-history-entries/{entry_id}")
+async def delete_medical_history_entry(entry_id: str, doctor: dict = Depends(get_current_doctor_full)):
+    is_admin = doctor.get('role') == 'admin'
+    query = {"id": entry_id} if is_admin else {"id": entry_id, "doctor_id": doctor['id']}
+    result = await db.medical_history_entries.delete_one(query)
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Antecedente no encontrado")
+    return {"message": "Antecedente eliminado"}
 
 # --- Appointments ---
 @api_router.post("/appointments")
