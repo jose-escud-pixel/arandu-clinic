@@ -1,860 +1,839 @@
-import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { Button } from '../components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../components/ui/dialog';
-import { Label } from '../components/ui/label';
-import { Input } from '../components/ui/input';
-import { Textarea } from '../components/ui/textarea';
-import { Badge } from '../components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../lib/api';
-import { toast } from 'sonner';
-import { ArrowLeft, Edit, Plus, Calendar, FileText, Image as ImageIcon, Download, Upload, Printer, Trash2, Search, X, ExternalLink, ClipboardList } from 'lucide-react';
-import { format } from 'date-fns';
-import { es } from 'date-fns/locale';
+import { useEmpresa } from '../context/EmpresaContext';
+import { Button } from '../components/ui/button';
+import { Input } from '../components/ui/input';
+import { Label } from '../components/ui/label';
+import {
+  ArrowLeft, Plus, Trash2, Edit2, Download, X,
+  Phone, MapPin, Briefcase, Shield, ClipboardList,
+  Pill, FolderOpen, History, Calendar, Search,
+  ChevronDown, ChevronUp, Filter, User, Weight, Heart, AlertCircle,
+  FileText, Check, Activity
+} from 'lucide-react';
+
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
+
+/* ─── Helpers ─────────────────────────────────────────── */
+const formatDate = (str) => {
+  if (!str) return '—';
+  try {
+    const s = typeof str === 'string' ? str.split('T')[0] : null;
+    if (s && /^\d{4}-\d{2}-\d{2}$/.test(s)) {
+      const [y, m, d] = s.split('-').map(Number);
+      return new Date(y, m - 1, d).toLocaleDateString('es-PY', { day:'2-digit', month:'2-digit', year:'numeric' });
+    }
+    return new Date(str).toLocaleDateString('es-PY', { day:'2-digit', month:'2-digit', year:'numeric' });
+  } catch { return str; }
+};
+
+const formatDateTime = (str) => {
+  if (!str) return '—';
+  try { return new Date(str).toLocaleString('es-PY', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }); }
+  catch { return str; }
+};
+
+/* ─── Modal genérico ──────────────────────────────────── */
+const Modal = ({ title, onClose, children, wide }) => (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+    <div className={`bg-white rounded-2xl shadow-2xl w-full ${wide ? 'max-w-2xl' : 'max-w-lg'} max-h-[90vh] overflow-y-auto`}>
+      <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+        <h3 className="font-bold text-lg text-foreground">{title}</h3>
+        <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
+      </div>
+      <div className="p-6">{children}</div>
+    </div>
+  </div>
+);
+
+/* ═══════════════════════════════════════════════════════
+   PANEL: INDICACIONES / RECETA
+═══════════════════════════════════════════════════════ */
+const IndicacionesPanel = ({ patientId, labels }) => {
+  const [items, setItems]         = useState([]);
+  const [loading, setLoading]     = useState(true);
+  const [showModal, setShowModal] = useState(false);
+  const [editing, setEditing]     = useState(null);
+  const [form, setForm]           = useState({ medications: '', instructions: '', diagnosis: '' });
+  const [saving, setSaving]       = useState(false);
+  const [downloading, setDownloading] = useState(null);
+  const [certDownloading, setCertDownloading] = useState(null);
+  const isFisio = labels.profesional === 'Fisioterapeuta';
+
+  const labelSingular = labels.indicaciones || 'Indicaciones';
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { setItems((await api.prescriptions.getByPatient(patientId)) || []); }
+    catch { setItems([]); }
+    finally { setLoading(false); }
+  }, [patientId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const openCreate = () => {
+    setEditing(null);
+    setForm({ medications: '', instructions: '', diagnosis: '' });
+    setShowModal(true);
+  };
+  const openEdit = (item) => {
+    setEditing(item);
+    setForm({ medications: item.medications || '', instructions: item.instructions || '', diagnosis: item.diagnosis || '' });
+    setShowModal(true);
+  };
+
+  const handleSave = async (e) => {
+    e.preventDefault(); setSaving(true);
+    try {
+      if (editing) await api.prescriptions.update(editing.id, form);
+      else         await api.prescriptions.create({ ...form, patient_id: patientId });
+      setShowModal(false); load();
+    } catch (err) { alert(err?.response?.data?.detail || 'Error al guardar'); }
+    finally { setSaving(false); }
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm(`¿Eliminar ${labelSingular.toLowerCase()}?`)) return;
+    await api.prescriptions.delete(id); load();
+  };
+
+  const handlePDF = async (id) => {
+    setDownloading(id);
+    try {
+      const blob = await api.prescriptions.getPDF(id);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `${labelSingular.toLowerCase()}-${id.slice(0,8)}.pdf`; a.click();
+      URL.revokeObjectURL(url);
+    } catch { alert('Error al generar PDF'); }
+    finally { setDownloading(null); }
+  };
+
+  const handleCertificado = async (id) => {
+    setCertDownloading(id);
+    try {
+      const blob = await api.prescriptions.getCertificadoPDF(id);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `certificado-fisioterapia-${id.slice(0,8)}.pdf`; a.click();
+      URL.revokeObjectURL(url);
+    } catch { alert('Error al generar certificado'); }
+    finally { setCertDownloading(null); }
+  };
+
+  const medicLabel = isFisio ? 'Ejercicios / Indicaciones' : 'Medicamentos';
+
+  if (loading) return <div className="text-center py-8 text-muted-foreground">Cargando...</div>;
+
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-4">
+        <h3 className="font-semibold text-foreground">{labelSingular} ({items.length})</h3>
+        <Button onClick={openCreate} size="sm" className="gap-1 rounded-xl">
+          <Plus className="w-3.5 h-3.5" /> Nueva {labelSingular.toLowerCase()}
+        </Button>
+      </div>
+
+      <div className="space-y-3">
+        {items.map(item => (
+          <div key={item.id} className="bg-white border border-border rounded-2xl p-4">
+            <div className="flex items-start justify-between">
+              <div className="flex-1 space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <Pill className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                  <span className="text-sm font-semibold text-foreground">{formatDate(item.date)}</span>
+                </div>
+                {item.diagnosis && (
+                  <div>
+                    <span className="text-xs font-semibold text-muted-foreground uppercase">Diagnóstico: </span>
+                    <span className="text-sm text-foreground">{item.diagnosis}</span>
+                  </div>
+                )}
+                {item.medications && (
+                  <div>
+                    <span className="text-xs font-semibold text-muted-foreground uppercase">{medicLabel}: </span>
+                    <span className="text-sm text-foreground whitespace-pre-line">{item.medications}</span>
+                  </div>
+                )}
+                {item.instructions && (
+                  <div>
+                    <span className="text-xs font-semibold text-muted-foreground uppercase">Instrucciones: </span>
+                    <span className="text-sm text-foreground">{item.instructions}</span>
+                  </div>
+                )}
+              </div>
+              <div className="flex gap-1 ml-3 flex-shrink-0">
+                <button onClick={() => handlePDF(item.id)} disabled={downloading === item.id}
+                        className="p-1.5 rounded-lg hover:bg-blue-50 text-muted-foreground hover:text-blue-600"
+                        title="Descargar PDF receta">
+                  {downloading === item.id
+                    ? <div className="w-3.5 h-3.5 border border-blue-300 border-t-blue-600 rounded-full animate-spin" />
+                    : <Download className="w-3.5 h-3.5" />}
+                </button>
+                {isFisio && (
+                  <button onClick={() => handleCertificado(item.id)} disabled={certDownloading === item.id}
+                          className="p-1.5 rounded-lg hover:bg-pink-50 text-muted-foreground hover:text-pink-600"
+                          title="Certificado fisioterapéutico PDF">
+                    {certDownloading === item.id
+                      ? <div className="w-3.5 h-3.5 border border-pink-300 border-t-pink-600 rounded-full animate-spin" />
+                      : <FileText className="w-3.5 h-3.5" />}
+                  </button>
+                )}
+                <button onClick={() => openEdit(item)}
+                        className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground">
+                  <Edit2 className="w-3.5 h-3.5" />
+                </button>
+                <button onClick={() => handleDelete(item.id)}
+                        className="p-1.5 rounded-lg hover:bg-red-50 text-muted-foreground hover:text-red-500">
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          </div>
+        ))}
+        {items.length === 0 && (
+          <div className="text-center py-10 text-muted-foreground">
+            <Pill className="w-10 h-10 mx-auto opacity-30 mb-2" />
+            <p>Sin {labelSingular.toLowerCase()} registradas</p>
+          </div>
+        )}
+      </div>
+
+      {showModal && (
+        <Modal title={`${editing ? 'Editar' : 'Nueva'} ${labelSingular}`} onClose={() => setShowModal(false)} wide>
+          <form onSubmit={handleSave} className="space-y-4">
+            <div className="space-y-1">
+              <Label>Diagnóstico / Motivo</Label>
+              <Input value={form.diagnosis} onChange={e => setForm(f=>({...f, diagnosis: e.target.value}))}
+                     placeholder="Diagnóstico o motivo de la consulta" className="rounded-xl" />
+            </div>
+            <div className="space-y-1">
+              <Label>{medicLabel}</Label>
+              <textarea value={form.medications} onChange={e => setForm(f=>({...f, medications: e.target.value}))}
+                        rows={5}
+                        placeholder={labels.profesional === 'Fisioterapeuta'
+                          ? 'Ej:\n1. Estiramiento de isquiotibiales — 3 series x 30s\n2. Ejercicio de fortalecimiento...'
+                          : 'Ej:\n- Ibuprofeno 400mg — 1 comprimido cada 8 horas x 5 días\n- Omeprazol 20mg...'}
+                        className="w-full border border-border rounded-xl px-3 py-2 text-sm resize-none bg-background font-mono" />
+            </div>
+            <div className="space-y-1">
+              <Label>Instrucciones adicionales</Label>
+              <textarea value={form.instructions} onChange={e => setForm(f=>({...f, instructions: e.target.value}))}
+                        rows={2} placeholder="Indicaciones de uso, recomendaciones..."
+                        className="w-full border border-border rounded-xl px-3 py-2 text-sm resize-none bg-background" />
+            </div>
+            <div className="flex gap-2 pt-2">
+              <Button type="button" variant="outline" onClick={() => setShowModal(false)} className="flex-1 rounded-xl">Cancelar</Button>
+              <Button type="submit" disabled={saving} className="flex-1 rounded-xl">
+                {saving ? 'Guardando...' : 'Guardar'}
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
+    </div>
+  );
+};
+
+/* ═══════════════════════════════════════════════════════
+   PANEL: HISTORIAL MÉDICO — con buscador + expandir
+═══════════════════════════════════════════════════════ */
+const HISTORY_CATEGORIES = [
+  { value: '', label: 'Todas las categorías' },
+  { value: 'antecedente', label: 'Antecedente' },
+  { value: 'alergia', label: 'Alergia' },
+  { value: 'cirugia', label: 'Cirugía' },
+  { value: 'enfermedad_cronica', label: 'Enfermedad crónica' },
+  { value: 'medicacion_actual', label: 'Medicación actual' },
+  { value: 'consulta', label: 'Consulta' },
+  { value: 'otro', label: 'Otro' },
+];
+
+const CATEGORY_COLORS = {
+  antecedente: 'bg-blue-100 text-blue-700',
+  alergia: 'bg-red-100 text-red-700',
+  cirugia: 'bg-purple-100 text-purple-700',
+  enfermedad_cronica: 'bg-orange-100 text-orange-700',
+  medicacion_actual: 'bg-green-100 text-green-700',
+  consulta: 'bg-cyan-100 text-cyan-700',
+  otro: 'bg-gray-100 text-gray-600',
+};
+
+const HistorialPanel = ({ patientId }) => {
+  const [entries, setEntries]         = useState([]);
+  const [loading, setLoading]         = useState(true);
+  const [search, setSearch]           = useState('');
+  const [filterCat, setFilterCat]     = useState('');
+  const [expanded, setExpanded]       = useState({});   // { id: true }
+  const [showModal, setShowModal]     = useState(false);
+  const [editingEntry, setEditingEntry] = useState(null);
+  const [form, setForm]               = useState({ category: 'otro', description: '', date: '' });
+  const [saving, setSaving]           = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { setEntries((await api.medicalHistory.getByPatient(patientId)) || []); }
+    catch { setEntries([]); }
+    finally { setLoading(false); }
+  }, [patientId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const openCreate = () => {
+    setEditingEntry(null);
+    setForm({ category: 'otro', description: '', date: '' });
+    setShowModal(true);
+  };
+
+  const openEdit = (entry) => {
+    setEditingEntry(entry);
+    setForm({ category: entry.category || 'otro', description: entry.description || '', date: entry.date || '' });
+    setShowModal(true);
+  };
+
+  const handleSave = async (e) => {
+    e.preventDefault(); setSaving(true);
+    try {
+      if (editingEntry) await api.medicalHistory.update(editingEntry.id, form);
+      else              await api.medicalHistory.create(patientId, form);
+      setShowModal(false); load();
+    }
+    catch { alert('Error al guardar'); }
+    finally { setSaving(false); }
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm('¿Eliminar este registro?')) return;
+    await api.medicalHistory.delete(id); load();
+  };
+
+  const toggleExpand = (id) => setExpanded(prev => ({ ...prev, [id]: !prev[id] }));
+
+  const PREVIEW_LENGTH = 150;
+
+  // Filtro local
+  const filtered = entries.filter(e => {
+    const matchSearch = !search || e.description?.toLowerCase().includes(search.toLowerCase());
+    const matchCat = !filterCat || e.category === filterCat;
+    return matchSearch && matchCat;
+  });
+
+  if (loading) return <div className="text-center py-8 text-muted-foreground">Cargando...</div>;
+
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-4">
+        <h3 className="font-semibold text-foreground">Historial médico ({filtered.length}{filtered.length !== entries.length ? ` de ${entries.length}` : ''})</h3>
+        <Button onClick={openCreate} size="sm" className="gap-1 rounded-xl">
+          <Plus className="w-3.5 h-3.5" /> Agregar
+        </Button>
+      </div>
+
+      {/* Filtros */}
+      <div className="flex gap-2 mb-4 flex-wrap">
+        <div className="relative flex-1 min-w-[160px]">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+          <Input value={search} onChange={e => setSearch(e.target.value)}
+                 placeholder="Buscar en historial..."
+                 className="pl-8 rounded-xl text-sm py-1.5 border-border" />
+          {search && (
+            <button onClick={() => setSearch('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+        <div className="flex items-center gap-1">
+          <Filter className="w-3.5 h-3.5 text-muted-foreground" />
+          <select value={filterCat} onChange={e => setFilterCat(e.target.value)}
+                  className="border border-border rounded-xl px-2.5 py-1.5 text-sm bg-background">
+            {HISTORY_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+          </select>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        {filtered.map(e => {
+          const isLong    = (e.description?.length || 0) > PREVIEW_LENGTH;
+          const isExpanded = expanded[e.id];
+          const displayText = isLong && !isExpanded
+            ? e.description.slice(0, PREVIEW_LENGTH) + '…'
+            : e.description;
+          const catColor = CATEGORY_COLORS[e.category] || 'bg-gray-100 text-gray-600';
+          const catLabel = HISTORY_CATEGORIES.find(c => c.value === e.category)?.label || e.category;
+
+          return (
+            <div key={e.id} className={`bg-white border border-border rounded-2xl px-4 py-3 transition-all ${isExpanded ? 'shadow-sm' : ''}`}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                    <span className={`text-xs rounded-full px-2 py-0.5 font-medium flex-shrink-0 ${catColor}`}>
+                      {catLabel}
+                    </span>
+                    {e.date && (
+                      <span className="text-xs text-muted-foreground flex-shrink-0">{formatDate(e.date)}</span>
+                    )}
+                  </div>
+                  <p className="text-sm text-foreground whitespace-pre-line leading-relaxed">{displayText}</p>
+                  {isLong && (
+                    <button
+                      onClick={() => toggleExpand(e.id)}
+                      className="mt-1.5 text-xs flex items-center gap-1 font-medium"
+                      style={{ color: 'var(--empresa-primary)' }}
+                    >
+                      {isExpanded
+                        ? <><ChevronUp className="w-3 h-3" /> Ver menos</>
+                        : <><ChevronDown className="w-3 h-3" /> Ver todo ({e.description.length} caracteres)</>}
+                    </button>
+                  )}
+                </div>
+                <div className="flex gap-1 flex-shrink-0">
+                  <button onClick={() => openEdit(e)}
+                          className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground">
+                    <Edit2 className="w-3.5 h-3.5" />
+                  </button>
+                  <button onClick={() => handleDelete(e.id)}
+                          className="p-1.5 rounded-lg hover:bg-red-50 text-muted-foreground hover:text-red-500">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+        {filtered.length === 0 && (
+          <div className="text-center py-10 text-muted-foreground">
+            <History className="w-10 h-10 mx-auto opacity-30 mb-2" />
+            <p>{entries.length === 0 ? 'Sin historial médico registrado' : 'No hay resultados para esta búsqueda'}</p>
+          </div>
+        )}
+      </div>
+
+      {showModal && (
+        <Modal title={editingEntry ? 'Editar registro' : 'Nuevo registro en historial'} onClose={() => setShowModal(false)}>
+          <form onSubmit={handleSave} className="space-y-3">
+            <div className="space-y-1">
+              <Label>Categoría</Label>
+              <select value={form.category} onChange={e => setForm(f=>({...f, category: e.target.value}))}
+                      className="w-full border border-border rounded-xl px-3 py-2 text-sm bg-background">
+                {HISTORY_CATEGORIES.filter(c => c.value).map(c => (
+                  <option key={c.value} value={c.value}>{c.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <Label>Fecha (opcional)</Label>
+              <Input type="date" value={form.date} onChange={e => setForm(f=>({...f, date: e.target.value}))}
+                     className="rounded-xl" />
+            </div>
+            <div className="space-y-1">
+              <Label>Descripción *</Label>
+              <textarea value={form.description} onChange={e => setForm(f=>({...f, description: e.target.value}))}
+                        rows={4} required placeholder="Describe el antecedente, alergia, cirugía, etc..."
+                        className="w-full border border-border rounded-xl px-3 py-2 text-sm resize-none bg-background" />
+            </div>
+            <div className="flex gap-2 pt-2">
+              <Button type="button" variant="outline" onClick={() => setShowModal(false)} className="flex-1 rounded-xl">Cancelar</Button>
+              <Button type="submit" disabled={saving} className="flex-1 rounded-xl">
+                {saving ? 'Guardando...' : editingEntry ? 'Guardar cambios' : 'Guardar'}
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
+    </div>
+  );
+};
+
+/* ═══════════════════════════════════════════════════════
+   PANEL: ARCHIVOS
+═══════════════════════════════════════════════════════ */
+const ArchivosPanel = ({ patientId }) => {
+  const [files, setFiles]       = useState([]);
+  const [loading, setLoading]   = useState(true);
+  const [uploading, setUploading] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { setFiles((await api.files.getByPatient(patientId)) || []); }
+    catch { setFiles([]); }
+    finally { setLoading(false); }
+  }, [patientId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleUpload = async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    setUploading(true);
+    try { await api.files.upload(patientId, file); load(); }
+    catch { alert('Error al subir archivo'); }
+    finally { setUploading(false); e.target.value = ''; }
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm('¿Eliminar archivo?')) return;
+    await api.files.delete(id); load();
+  };
+
+  const getIcon = (name) => {
+    const ext = name?.split('.').pop()?.toLowerCase();
+    if (['jpg','jpeg','png','gif','webp'].includes(ext)) return '🖼️';
+    if (ext === 'pdf') return '📄'; if (['doc','docx'].includes(ext)) return '📝';
+    return '📎';
+  };
+
+  if (loading) return <div className="text-center py-8 text-muted-foreground">Cargando...</div>;
+
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-4">
+        <h3 className="font-semibold text-foreground">Archivos ({files.length})</h3>
+        <label className="cursor-pointer">
+          <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-sm font-medium text-white transition-colors"
+                style={{ backgroundColor: 'var(--empresa-primary)' }}>
+            {uploading
+              ? <><div className="w-3.5 h-3.5 border border-white/40 border-t-white rounded-full animate-spin" /> Subiendo...</>
+              : <><Plus className="w-3.5 h-3.5" /> Subir archivo</>}
+          </span>
+          <input type="file" className="hidden" onChange={handleUpload} disabled={uploading} />
+        </label>
+      </div>
+      <div className="grid gap-2">
+        {files.map(f => (
+          <div key={f.id} className="bg-white border border-border rounded-2xl px-4 py-3 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl">{getIcon(f.filename || f.file_url)}</span>
+              <div>
+                <p className="text-sm font-medium text-foreground">{f.filename || 'Archivo'}</p>
+                <p className="text-xs text-muted-foreground">{formatDateTime(f.created_at)}</p>
+              </div>
+            </div>
+            <div className="flex gap-1">
+              <a href={`${BACKEND_URL}${f.file_url}`} target="_blank" rel="noopener noreferrer"
+                 className="p-1.5 rounded-lg hover:bg-blue-50 text-muted-foreground hover:text-blue-500">
+                <Download className="w-3.5 h-3.5" />
+              </a>
+              <button onClick={() => handleDelete(f.id)}
+                      className="p-1.5 rounded-lg hover:bg-red-50 text-muted-foreground hover:text-red-500">
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        ))}
+        {files.length === 0 && (
+          <div className="text-center py-10 text-muted-foreground">
+            <FolderOpen className="w-10 h-10 mx-auto opacity-30 mb-2" /><p>Sin archivos adjuntos</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+/* ═══════════════════════════════════════════════════════
+   PANEL: CITAS
+═══════════════════════════════════════════════════════ */
+const CitasPanel = ({ patientId }) => {
+  const [citas, setCitas]         = useState([]);
+  const [loading, setLoading]     = useState(true);
+  const [showModal, setShowModal] = useState(false);
+  const [form, setForm]           = useState({ date: '', time: '', reason: '', status: 'scheduled' });
+  const [saving, setSaving]       = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { setCitas((await api.appointments.getByPatient(patientId)) || []); }
+    catch { setCitas([]); }
+    finally { setLoading(false); }
+  }, [patientId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleSave = async (e) => {
+    e.preventDefault(); setSaving(true);
+    try { await api.appointments.create({ ...form, patient_id: patientId }); setShowModal(false); load(); }
+    catch { alert('Error al guardar cita'); }
+    finally { setSaving(false); }
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm('¿Eliminar cita?')) return;
+    await api.appointments.delete(id); load();
+  };
+
+  const statusMap = {
+    scheduled: { label: 'Programada', cls: 'bg-blue-100 text-blue-700' },
+    completed:  { label: 'Realizada',  cls: 'bg-green-100 text-green-700' },
+    cancelled:  { label: 'Cancelada',  cls: 'bg-red-100 text-red-700' },
+  };
+
+  if (loading) return <div className="text-center py-8 text-muted-foreground">Cargando...</div>;
+
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-4">
+        <h3 className="font-semibold text-foreground">Citas ({citas.length})</h3>
+        <Button onClick={() => { setForm({ date: '', time: '', reason: '', status: 'scheduled' }); setShowModal(true); }}
+                size="sm" className="gap-1 rounded-xl">
+          <Plus className="w-3.5 h-3.5" /> Nueva cita
+        </Button>
+      </div>
+      <div className="space-y-2">
+        {citas.map(c => {
+          const st = statusMap[c.status] || { label: c.status, cls: 'bg-gray-100 text-gray-600' };
+          return (
+            <div key={c.id} className="bg-white border border-border rounded-2xl px-4 py-3 flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Calendar className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-sm font-medium text-foreground">
+                    {formatDate(c.date)}{c.time ? ` — ${c.time}` : ''}
+                  </span>
+                  <span className={`text-xs rounded-full px-2 py-0.5 ${st.cls}`}>{st.label}</span>
+                </div>
+                {c.reason && <p className="text-xs text-muted-foreground mt-1 ml-6">{c.reason}</p>}
+              </div>
+              <button onClick={() => handleDelete(c.id)}
+                      className="p-1.5 rounded-lg hover:bg-red-50 text-muted-foreground hover:text-red-500">
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          );
+        })}
+        {citas.length === 0 && (
+          <div className="text-center py-10 text-muted-foreground">
+            <Calendar className="w-10 h-10 mx-auto opacity-30 mb-2" /><p>Sin citas registradas</p>
+          </div>
+        )}
+      </div>
+      {showModal && (
+        <Modal title="Nueva Cita" onClose={() => setShowModal(false)}>
+          <form onSubmit={handleSave} className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1"><Label>Fecha</Label><Input type="date" value={form.date} onChange={e=>setForm(f=>({...f,date:e.target.value}))} className="rounded-xl" required /></div>
+              <div className="space-y-1"><Label>Hora</Label><Input type="time" value={form.time} onChange={e=>setForm(f=>({...f,time:e.target.value}))} className="rounded-xl" /></div>
+            </div>
+            <div className="space-y-1"><Label>Motivo</Label><Input value={form.reason} onChange={e=>setForm(f=>({...f,reason:e.target.value}))} placeholder="Motivo..." className="rounded-xl" /></div>
+            <div className="space-y-1">
+              <Label>Estado</Label>
+              <select value={form.status} onChange={e=>setForm(f=>({...f,status:e.target.value}))} className="w-full border border-border rounded-xl px-3 py-2 text-sm bg-background">
+                <option value="scheduled">Programada</option>
+                <option value="completed">Realizada</option>
+                <option value="cancelled">Cancelada</option>
+              </select>
+            </div>
+            <div className="flex gap-2 pt-2">
+              <Button type="button" variant="outline" onClick={()=>setShowModal(false)} className="flex-1 rounded-xl">Cancelar</Button>
+              <Button type="submit" disabled={saving} className="flex-1 rounded-xl">{saving?'Guardando...':'Guardar'}</Button>
+            </div>
+          </form>
+        </Modal>
+      )}
+    </div>
+  );
+};
+
+/* ═══════════════════════════════════════════════════════
+   COMPONENTE PRINCIPAL
+═══════════════════════════════════════════════════════ */
+const TABS = [
+  { id: 'indicaciones', label: null /* dinámico */ },
+  { id: 'historial',    label: 'Historial' },
+  { id: 'archivos',     label: 'Archivos' },
+  { id: 'citas',        label: 'Citas' },
+];
 
 const PatientDetail = () => {
   const { patientId } = useParams();
-  const navigate = useNavigate();
-  const [patient, setPatient] = useState(null);
-  const [consultations, setConsultations] = useState([]);
-  const [appointments, setAppointments] = useState([]);
-  const [files, setFiles] = useState([]);
-  const [prescriptions, setPrescriptions] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [showEditDialog, setShowEditDialog] = useState(false);
-  const [showConsultationDialog, setShowConsultationDialog] = useState(false);
-  const [showAppointmentDialog, setShowAppointmentDialog] = useState(false);
-  const [showPrescriptionDialog, setShowPrescriptionDialog] = useState(false);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState(null);
-  const [showEditConsultation, setShowEditConsultation] = useState(false);
-  const [showEditAppointment, setShowEditAppointment] = useState(false);
-  const [showEditPrescription, setShowEditPrescription] = useState(false);
-  const [uploading, setUploading] = useState(false);
+  const navigate      = useNavigate();
+  const { labels }    = useEmpresa();
+  const [patient,  setPatient]  = useState(null);
+  const [loading,  setLoading]  = useState(true);
+  const [tab,      setTab]      = useState('indicaciones');
   const [exporting, setExporting] = useState(false);
+  const [editingStatus, setEditingStatus] = useState(false);
+  const [statusValue,   setStatusValue]   = useState('');
+  const [savingStatus,  setSavingStatus]  = useState(false);
 
-  const [editForm, setEditForm] = useState({});
-  const [consultationForm, setConsultationForm] = useState({ diagnosis: '', treatment: '', notes: '' });
-  const [appointmentForm, setAppointmentForm] = useState({ date: '', reason: '', notes: '' });
-  const [prescriptionForm, setPrescriptionForm] = useState({ medications: '', instructions: '', diagnosis: '' });
-  const [editingId, setEditingId] = useState(null);
-
-  // Medical History Entries
-  const [medicalHistory, setMedicalHistory] = useState([]);
-  const [historySearch, setHistorySearch] = useState('');
-  const [showHistoryDialog, setShowHistoryDialog] = useState(false);
-  const [showEditHistoryDialog, setShowEditHistoryDialog] = useState(false);
-  const [historyForm, setHistoryForm] = useState({ category: 'otro', description: '', date: '' });
-  const [editingHistoryId, setEditingHistoryId] = useState(null);
-
-  // Consultation search
-  const [consultationSearch, setConsultationSearch] = useState('');
-
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { loadData(); }, [patientId]);
-
-  const loadData = async () => {
+  const loadPatient = useCallback(async () => {
+    setLoading(true);
     try {
-      const [patientData, consultationsData, appointmentsData, filesData, prescriptionsData, historyData] = await Promise.all([
-        api.patients.getById(patientId),
-        api.consultations.getByPatient(patientId),
-        api.appointments.getByPatient(patientId),
-        api.files.getByPatient(patientId),
-        api.prescriptions.getByPatient(patientId),
-        api.medicalHistory.getByPatient(patientId),
-      ]);
-      setPatient(patientData);
-      setEditForm(patientData);
-      setConsultations(consultationsData);
-      setAppointments(appointmentsData);
-      setFiles(filesData);
-      setPrescriptions(prescriptionsData);
-      setMedicalHistory(historyData);
-    } catch (error) {
-      toast.error('Error al cargar datos del paciente');
-    } finally {
-      setLoading(false);
+      const data = await api.patients.getById(patientId);
+      setPatient(data);
+      setStatusValue(data.current_status || '');
     }
-  };
+    catch { navigate('/patients'); }
+    finally { setLoading(false); }
+  }, [patientId, navigate]);
 
-  const handleUpdatePatient = async (e) => {
-    e.preventDefault();
+  useEffect(() => { loadPatient(); }, [loadPatient]);
+
+  const handleSaveStatus = async () => {
+    setSavingStatus(true);
     try {
-      await api.patients.update(patientId, editForm);
-      toast.success('Paciente actualizado');
-      setShowEditDialog(false);
-      loadData();
-    } catch (error) { toast.error('Error al actualizar paciente'); }
-  };
-
-  // --- Medical History Handlers ---
-  const HISTORY_CATEGORIES = [
-    { value: 'patologia_cronica', label: 'Patología Crónica', color: 'bg-red-100 text-red-700 border-red-200' },
-    { value: 'alergia', label: 'Alergia', color: 'bg-orange-100 text-orange-700 border-orange-200' },
-    { value: 'cirugia', label: 'Cirugía', color: 'bg-purple-100 text-purple-700 border-purple-200' },
-    { value: 'medicacion', label: 'Medicación Habitual', color: 'bg-blue-100 text-blue-700 border-blue-200' },
-    { value: 'antecedente_familiar', label: 'Antecedente Familiar', color: 'bg-green-100 text-green-700 border-green-200' },
-    { value: 'otro', label: 'Otro', color: 'bg-gray-100 text-gray-600 border-gray-200' },
-  ];
-
-  const getCategoryStyle = (cat) => {
-    const found = HISTORY_CATEGORIES.find(c => c.value === cat);
-    return found ? found.color : 'bg-gray-100 text-gray-600 border-gray-200';
-  };
-
-  const getCategoryLabel = (cat) => {
-    const found = HISTORY_CATEGORIES.find(c => c.value === cat);
-    return found ? found.label : 'Otro';
-  };
-
-  const handleCreateHistoryEntry = async (e) => {
-    e.preventDefault();
-    try {
-      const today = new Date().toISOString().slice(0, 10);
-      await api.medicalHistory.create(patientId, { ...historyForm, date: historyForm.date || today });
-      toast.success('Antecedente registrado');
-      setShowHistoryDialog(false);
-      setHistoryForm({ category: 'otro', description: '', date: '' });
-      const updated = await api.medicalHistory.getByPatient(patientId);
-      setMedicalHistory(updated);
-    } catch (error) { toast.error('Error al registrar antecedente'); }
-  };
-
-  const handleEditHistoryEntry = async (e) => {
-    e.preventDefault();
-    try {
-      await api.medicalHistory.update(editingHistoryId, historyForm);
-      toast.success('Antecedente actualizado');
-      setShowEditHistoryDialog(false);
-      setEditingHistoryId(null);
-      const updated = await api.medicalHistory.getByPatient(patientId);
-      setMedicalHistory(updated);
-    } catch (error) { toast.error('Error al actualizar antecedente'); }
-  };
-
-  const handleDeleteHistoryEntry = async (entryId) => {
-    try {
-      await api.medicalHistory.delete(entryId);
-      toast.success('Antecedente eliminado');
-      setMedicalHistory(prev => prev.filter(e => e.id !== entryId));
-    } catch (error) { toast.error('Error al eliminar antecedente'); }
-  };
-
-  const handleDeletePatient = async () => {
-    try {
-      await api.patients.delete(patientId);
-      toast.success('Paciente eliminado');
-      navigate('/patients');
-    } catch (error) { toast.error('Error al eliminar paciente'); }
-  };
-
-  const handleCreateConsultation = async (e) => {
-    e.preventDefault();
-    try {
-      await api.consultations.create({ ...consultationForm, patient_id: patientId });
-      toast.success('Consulta registrada');
-      setShowConsultationDialog(false);
-      setConsultationForm({ diagnosis: '', treatment: '', notes: '' });
-      loadData();
-    } catch (error) { toast.error('Error al registrar consulta'); }
-  };
-
-  const handleEditConsultation = async (e) => {
-    e.preventDefault();
-    try {
-      await api.consultations.update(editingId, consultationForm);
-      toast.success('Consulta actualizada');
-      setShowEditConsultation(false);
-      setEditingId(null);
-      setConsultationForm({ diagnosis: '', treatment: '', notes: '' });
-      loadData();
-    } catch (error) { toast.error('Error al actualizar consulta'); }
-  };
-
-  const handleCreateAppointment = async (e) => {
-    e.preventDefault();
-    try {
-      await api.appointments.create({ ...appointmentForm, patient_id: patientId });
-      toast.success('Cita agendada');
-      setShowAppointmentDialog(false);
-      setAppointmentForm({ date: '', reason: '', notes: '' });
-      loadData();
-    } catch (error) { toast.error('Error al agendar cita'); }
-  };
-
-  const handleEditAppointment = async (e) => {
-    e.preventDefault();
-    try {
-      await api.appointments.update(editingId, appointmentForm);
-      toast.success('Cita actualizada');
-      setShowEditAppointment(false);
-      setEditingId(null);
-      setAppointmentForm({ date: '', reason: '', notes: '' });
-      loadData();
-    } catch (error) { toast.error('Error al actualizar cita'); }
-  };
-
-  const handleCreatePrescription = async (e) => {
-    e.preventDefault();
-    try {
-      await api.prescriptions.create({ ...prescriptionForm, patient_id: patientId });
-      toast.success('Receta creada');
-      setShowPrescriptionDialog(false);
-      setPrescriptionForm({ medications: '', instructions: '', diagnosis: '' });
-      loadData();
-    } catch (error) { toast.error('Error al crear receta'); }
-  };
-
-  const handleEditPrescription = async (e) => {
-    e.preventDefault();
-    try {
-      await api.prescriptions.update(editingId, prescriptionForm);
-      toast.success('Receta actualizada');
-      setShowEditPrescription(false);
-      setEditingId(null);
-      setPrescriptionForm({ medications: '', instructions: '', diagnosis: '' });
-      loadData();
-    } catch (error) { toast.error('Error al actualizar receta'); }
-  };
-
-  const handleFileUpload = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setUploading(true);
-    try {
-      await api.files.upload(patientId, file);
-      toast.success('Archivo subido exitosamente');
-      loadData();
-    } catch (error) { toast.error('Error al subir archivo'); }
-    finally { setUploading(false); }
+      await api.patients.update(patientId, { current_status: statusValue });
+      setPatient(p => ({ ...p, current_status: statusValue }));
+      setEditingStatus(false);
+    } catch { alert('Error al guardar estado'); }
+    finally { setSavingStatus(false); }
   };
 
   const handleExportPDF = async () => {
     setExporting(true);
     try {
       const blob = await api.export.patientPDF(patientId);
-      const url = window.URL.createObjectURL(blob);
+      const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url;
-      a.download = `historial_${patient.name.replace(/ /g, '_')}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-      toast.success('Historial exportado');
-    } catch (error) { toast.error('Error al exportar historial'); }
+      a.href = url; a.download = `paciente-${patient?.name?.replace(/\s/g,'-')}.pdf`; a.click();
+      URL.revokeObjectURL(url);
+    } catch { alert('Error al generar PDF'); }
     finally { setExporting(false); }
   };
 
-  const handlePrintPrescription = async (prescriptionId) => {
-    try {
-      const blob = await api.prescriptions.getPDF(prescriptionId);
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `receta_${patient.name.replace(/ /g, '_')}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-      toast.success('Receta descargada');
-    } catch (error) { toast.error('Error al descargar receta'); }
+  const tabLabel = (id) => {
+    if (id === 'indicaciones') return labels.indicaciones || 'Indicaciones';
+    return TABS.find(t => t.id === id)?.label || id;
   };
 
-  const confirmDelete = (type, id, label) => {
-    setDeleteTarget({ type, id, label });
-    setShowDeleteConfirm(true);
-  };
+  if (loading) return (
+    <div className="flex items-center justify-center py-24">
+      <div className="animate-spin w-8 h-8 border-2 border-gray-300 rounded-full"
+           style={{ borderTopColor: 'var(--empresa-primary)' }} />
+    </div>
+  );
+  if (!patient) return null;
 
-  const executeDelete = async () => {
-    if (!deleteTarget) return;
-    try {
-      if (deleteTarget.type === 'patient') await handleDeletePatient();
-      else if (deleteTarget.type === 'consultation') await api.consultations.delete(deleteTarget.id);
-      else if (deleteTarget.type === 'appointment') await api.appointments.delete(deleteTarget.id);
-      else if (deleteTarget.type === 'prescription') await api.prescriptions.delete(deleteTarget.id);
-      else if (deleteTarget.type === 'file') await api.files.delete(deleteTarget.id);
-
-      if (deleteTarget.type !== 'patient') {
-        toast.success('Eliminado correctamente');
-        loadData();
-      }
-    } catch (error) { toast.error('Error al eliminar'); }
-    finally { setShowDeleteConfirm(false); setDeleteTarget(null); }
-  };
-
-  if (loading) return <div className="flex items-center justify-center h-96"><div className="text-muted-foreground">Cargando...</div></div>;
-  if (!patient) return <div>Paciente no encontrado</div>;
+  const p = patient;
 
   return (
-    <div data-testid="patient-detail-page" className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
-        <Button data-testid="back-button" variant="ghost" onClick={() => navigate('/patients')} className="rounded-full">
-          <ArrowLeft className="w-5 h-5" />
-        </Button>
-        <div className="flex-1 min-w-0">
-          <h1 className="text-2xl sm:text-4xl md:text-5xl font-bold font-heading tracking-tight text-charcoal-900 truncate">{patient.name}</h1>
-          <p className="text-sm sm:text-base text-charcoal-600 mt-1">Cedula: {patient.cedula}</p>
-        </div>
-        <div className="flex flex-wrap gap-2 w-full sm:w-auto">
-          <Button data-testid="export-pdf-button" onClick={handleExportPDF} disabled={exporting} variant="outline" size="sm" className="rounded-full border-secondary text-secondary hover:bg-secondary/10">
-            <Download className="w-4 h-4 mr-1" />{exporting ? 'Exportando...' : 'PDF'}
-          </Button>
-          <Button data-testid="edit-patient-button" onClick={() => setShowEditDialog(true)} size="sm" className="rounded-full bg-primary text-white hover:bg-primary/90">
-            <Edit className="w-4 h-4 mr-1" />Editar
-          </Button>
-          <Button data-testid="delete-patient-button" onClick={() => confirmDelete('patient', patientId, patient.name)} variant="outline" size="sm" className="rounded-full border-red-400 text-red-500 hover:bg-red-50">
-            <Trash2 className="w-4 h-4 mr-1" />Eliminar
-          </Button>
-        </div>
+    <div className="max-w-5xl mx-auto space-y-6">
+      {/* Breadcrumb */}
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Link to="/patients" className="hover:text-foreground flex items-center gap-1">
+          <ArrowLeft className="w-4 h-4" /> Pacientes
+        </Link>
+        <span>/</span>
+        <span className="text-foreground font-medium">{p.name}</span>
       </div>
 
-      {/* Edit Patient Dialog */}
-      <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
-        <DialogContent className="sm:max-w-[600px] rounded-2xl">
-          <DialogHeader>
-            <DialogTitle className="text-2xl font-heading">Editar Paciente</DialogTitle>
-            <DialogDescription>Modifica los datos del paciente</DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleUpdatePatient} className="space-y-4 mt-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Nombre Completo</Label>
-                <Input data-testid="edit-name-input" value={editForm.name || ''} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} className="rounded-xl h-12 bg-[#FAF9F6] border-[#E5E0D6]" />
-              </div>
-              <div className="space-y-2">
-                <Label>Edad</Label>
-                <Input data-testid="edit-age-input" type="number" value={editForm.age || ''} onChange={(e) => setEditForm({ ...editForm, age: parseInt(e.target.value) })} className="rounded-xl h-12 bg-[#FAF9F6] border-[#E5E0D6]" />
-              </div>
+      {/* ── Ficha del paciente ── */}
+      <div className="bg-white border border-border rounded-2xl p-6">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-4">
+            {/* Avatar */}
+            <div className="w-16 h-16 rounded-2xl flex items-center justify-center flex-shrink-0 text-white text-2xl font-bold"
+                 style={{ backgroundColor: 'var(--empresa-primary)' }}>
+              {p.name?.charAt(0)?.toUpperCase()}
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Cédula</Label>
-                <Input value={editForm.cedula || ''} onChange={(e) => setEditForm({ ...editForm, cedula: e.target.value })} className="rounded-xl h-12 bg-[#FAF9F6] border-[#E5E0D6]" />
+            <div>
+              <h1 className="text-2xl font-bold font-heading text-foreground">{p.name}</h1>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1">
+                {p.cedula    && <span className="text-sm text-muted-foreground">CI: {p.cedula}</span>}
+                {p.ci_ruc    && <span className="text-sm text-muted-foreground">RUC: {p.ci_ruc}{p.ci_dv ? `-${p.ci_dv}` : ''}</span>}
+                {p.age       && <span className="text-sm text-muted-foreground">{p.age} años</span>}
+                {p.nationality && <span className="text-sm text-muted-foreground">{p.nationality}</span>}
+                {p.phone     && <span className="text-sm text-muted-foreground flex items-center gap-1"><Phone className="w-3.5 h-3.5" />{p.phone}</span>}
+                {p.address   && <span className="text-sm text-muted-foreground flex items-center gap-1"><MapPin className="w-3.5 h-3.5" />{p.address}</span>}
+                {p.occupation && <span className="text-sm text-muted-foreground flex items-center gap-1"><Briefcase className="w-3.5 h-3.5" />{p.occupation}</span>}
               </div>
-              <div className="space-y-2">
-                <Label>Nacionalidad</Label>
-                <Input data-testid="edit-nationality-input" value={editForm.nationality || ''} onChange={(e) => setEditForm({ ...editForm, nationality: e.target.value })} placeholder="Ej: Paraguaya" className="rounded-xl h-12 bg-[#FAF9F6] border-[#E5E0D6]" />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Teléfono</Label>
-                <Input data-testid="edit-phone-input" value={editForm.phone || ''} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} className="rounded-xl h-12 bg-[#FAF9F6] border-[#E5E0D6]" />
-              </div>
-              <div className="space-y-2">
-                <Label>Ocupación</Label>
-                <Input value={editForm.occupation || ''} onChange={(e) => setEditForm({ ...editForm, occupation: e.target.value })} className="rounded-xl h-12 bg-[#FAF9F6] border-[#E5E0D6]" />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>Domicilio</Label>
-              <Input data-testid="edit-address-input" value={editForm.address || ''} onChange={(e) => setEditForm({ ...editForm, address: e.target.value })} className="rounded-xl h-12 bg-[#FAF9F6] border-[#E5E0D6]" />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Nombre del Seguro</Label>
-                <Input data-testid="edit-insurance-name-input" value={editForm.insurance_name || ''} onChange={(e) => setEditForm({ ...editForm, insurance_name: e.target.value })} placeholder="Ej: IPS, Asismed" className="rounded-xl h-12 bg-[#FAF9F6] border-[#E5E0D6]" />
-              </div>
-              <div className="space-y-2">
-                <Label>Nro. Carnet Seguro</Label>
-                <Input data-testid="edit-insurance-number-input" value={editForm.insurance_number || ''} onChange={(e) => setEditForm({ ...editForm, insurance_number: e.target.value })} placeholder="Número de carnet" className="rounded-xl h-12 bg-[#FAF9F6] border-[#E5E0D6]" />
-              </div>
-            </div>
-            <Button data-testid="save-patient-button" type="submit" className="w-full h-12 rounded-full bg-primary text-white hover:bg-primary/90">Guardar Cambios</Button>
-          </form>
-        </DialogContent>
-      </Dialog>
 
-      {/* Delete Confirmation Dialog */}
-      <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
-        <DialogContent className="sm:max-w-[400px] rounded-2xl">
-          <DialogHeader>
-            <DialogTitle className="text-xl font-heading text-red-600">Confirmar Eliminación</DialogTitle>
-            <DialogDescription>Esta acción no se puede deshacer</DialogDescription>
-          </DialogHeader>
-          <p className="text-charcoal-700 mt-2">Estas seguro de que deseas eliminar <strong>{deleteTarget?.label}</strong>?</p>
-          <div className="flex gap-3 mt-4">
-            <Button variant="outline" onClick={() => setShowDeleteConfirm(false)} className="flex-1 rounded-full">Cancelar</Button>
-            <Button data-testid="confirm-delete-button" onClick={executeDelete} className="flex-1 rounded-full bg-red-500 text-white hover:bg-red-600">Eliminar</Button>
+              {/* Seguro */}
+              {p.insurance_name && (
+                <div className="mt-1.5 flex items-center gap-2">
+                  <Shield className="w-3.5 h-3.5 text-blue-500" />
+                  <span className="text-sm text-blue-600 font-medium">{p.insurance_name}</span>
+                  {p.insurance_number && <span className="text-xs text-muted-foreground">#{p.insurance_number}</span>}
+                </div>
+              )}
+
+              {/* Campos extendidos (Equilibrio) */}
+              {labels.extendedPatient && (
+                <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1.5">
+                  {p.sexo              && <span className="text-xs text-muted-foreground flex items-center gap-1"><User className="w-3 h-3"/>{p.sexo.charAt(0).toUpperCase()+p.sexo.slice(1)}</span>}
+                  {p.peso              && <span className="text-xs text-muted-foreground flex items-center gap-1"><Weight className="w-3 h-3"/>{p.peso} kg</span>}
+                  {p.estado_civil      && <span className="text-xs text-muted-foreground flex items-center gap-1"><Heart className="w-3 h-3"/>{p.estado_civil.replace('_',' ')}</span>}
+                  {p.contacto_emergencia && <span className="text-xs text-muted-foreground flex items-center gap-1"><AlertCircle className="w-3 h-3"/>{p.contacto_emergencia}</span>}
+                </div>
+              )}
+            </div>
           </div>
-        </DialogContent>
-      </Dialog>
 
-      {/* Patient Info Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <Card className="border-border shadow-card rounded-2xl" data-testid="patient-info-card">
-          <CardHeader><CardTitle className="text-xl font-heading">Información Personal</CardTitle></CardHeader>
-          <CardContent className="space-y-4">
-            <div><p className="text-sm text-muted-foreground">Edad</p><p className="text-base font-medium">{patient.age} años</p></div>
-            <div><p className="text-sm text-muted-foreground">Nacionalidad</p><p className="text-base font-medium">{patient.nationality || 'No especificada'}</p></div>
-            <div><p className="text-sm text-muted-foreground">Teléfono</p><p className="text-base font-medium">{patient.phone}</p></div>
-            <div><p className="text-sm text-muted-foreground">Domicilio</p><p className="text-base font-medium">{patient.address}</p></div>
-            <div><p className="text-sm text-muted-foreground">Ocupación</p><p className="text-base font-medium">{patient.occupation}</p></div>
-            <div><p className="text-sm text-muted-foreground">Seguro Médico</p><p className="text-base font-medium">{patient.insurance_name || 'Sin seguro'}</p></div>
-            {patient.insurance_number && <div><p className="text-sm text-muted-foreground">Nro. Carnet Seguro</p><p className="text-base font-medium">{patient.insurance_number}</p></div>}
-            <div><p className="text-sm text-muted-foreground">Estado</p><Badge variant={patient.status === 'active' ? 'default' : 'secondary'} className="rounded-full">{patient.status === 'active' ? 'Activo' : 'Inactivo'}</Badge></div>
-          </CardContent>
-        </Card>
-        <Card className="md:col-span-2 border-border shadow-card rounded-2xl" data-testid="patient-history-card">
-          <CardHeader>
-            <div className="flex flex-row items-center justify-between">
-              <CardTitle className="text-xl font-heading">Antecedentes Médicos</CardTitle>
-              <Button size="sm" onClick={() => { setHistoryForm({ category: 'otro', description: '', date: '' }); setShowHistoryDialog(true); }} className="rounded-full bg-primary text-white hover:bg-primary/90">
-                <Plus className="w-4 h-4 mr-1" />Agregar
-              </Button>
-            </div>
-            {/* Buscador */}
-            <div className="relative mt-2">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                placeholder="Buscar antecedente..."
-                value={historySearch}
-                onChange={e => setHistorySearch(e.target.value)}
-                className="pl-9 pr-8 rounded-xl h-9 bg-[#FAF9F6] border-[#E5E0D6] text-sm"
-              />
-              {historySearch && (
-                <button onClick={() => setHistorySearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-charcoal-700">
-                  <X className="w-4 h-4" />
-                </button>
-              )}
-            </div>
-          </CardHeader>
-          <CardContent>
-            {medicalHistory.length === 0 ? (
-              <div className="text-center py-6">
-                <ClipboardList className="w-10 h-10 text-muted-foreground mx-auto mb-2" />
-                <p className="text-muted-foreground text-sm">No hay antecedentes registrados</p>
-              </div>
-            ) : (
-              <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-                {medicalHistory
-                  .filter(e => !historySearch || e.description.toLowerCase().includes(historySearch.toLowerCase()) || getCategoryLabel(e.category).toLowerCase().includes(historySearch.toLowerCase()))
-                  .map(entry => (
-                    <div key={entry.id} className="flex items-start justify-between gap-2 p-3 bg-muted rounded-xl border border-border">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex flex-wrap items-center gap-2 mb-1">
-                          <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${getCategoryStyle(entry.category)}`}>
-                            {getCategoryLabel(entry.category)}
-                          </span>
-                          <span className="text-xs text-muted-foreground">{entry.date}</span>
-                        </div>
-                        <p className="text-sm text-charcoal-800">{entry.description}</p>
-                      </div>
-                      <div className="flex gap-1 flex-shrink-0">
-                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-charcoal-500 hover:text-primary"
-                          onClick={() => { setEditingHistoryId(entry.id); setHistoryForm({ category: entry.category, description: entry.description, date: entry.date }); setShowEditHistoryDialog(true); }}>
-                          <Edit className="w-3.5 h-3.5" />
-                        </Button>
-                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-charcoal-500 hover:text-red-500"
-                          onClick={() => handleDeleteHistoryEntry(entry.id)}>
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                {medicalHistory.filter(e => !historySearch || e.description.toLowerCase().includes(historySearch.toLowerCase()) || getCategoryLabel(e.category).toLowerCase().includes(historySearch.toLowerCase())).length === 0 && (
-                  <p className="text-sm text-muted-foreground text-center py-4">Sin resultados para "{historySearch}"</p>
-                )}
-              </div>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={handleExportPDF} disabled={exporting}
+                    className="gap-2 rounded-xl">
+              {exporting
+                ? <><div className="w-3.5 h-3.5 border border-gray-300 border-t-gray-600 rounded-full animate-spin"/>PDF...</>
+                : <><Download className="w-3.5 h-3.5"/>Exportar PDF</>}
+            </Button>
+          </div>
+        </div>
+
+        {/* Antecedentes médicos de la ficha */}
+        {p.medical_history && (
+          <div className="mt-4 pt-4 border-t border-border">
+            <p className="text-xs font-semibold text-muted-foreground uppercase mb-1.5 flex items-center gap-1">
+              <ClipboardList className="w-3.5 h-3.5" /> Antecedentes generales
+            </p>
+            <p className="text-sm text-foreground whitespace-pre-line">{p.medical_history}</p>
+          </div>
+        )}
+
+        {/* Estado actual / evolución */}
+        <div className={`mt-4 pt-4 border-t border-border`}>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs font-semibold text-muted-foreground uppercase flex items-center gap-1">
+              <Activity className="w-3.5 h-3.5" /> Estado actual / Evolución
+            </p>
+            {!editingStatus && (
+              <button onClick={() => { setStatusValue(p.current_status || ''); setEditingStatus(true); }}
+                      className="text-xs flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground">
+                <Edit2 className="w-3 h-3" /> Editar
+              </button>
             )}
-          </CardContent>
-        </Card>
+          </div>
+          {editingStatus ? (
+            <div className="space-y-2">
+              <textarea
+                value={statusValue}
+                onChange={e => setStatusValue(e.target.value)}
+                rows={3}
+                placeholder="Describe el estado actual del paciente, evolución del tratamiento..."
+                className="w-full border border-border rounded-xl px-3 py-2 text-sm resize-none bg-background"
+              />
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline" onClick={() => setEditingStatus(false)} className="rounded-xl">Cancelar</Button>
+                <Button size="sm" onClick={handleSaveStatus} disabled={savingStatus} className="rounded-xl gap-1">
+                  {savingStatus ? 'Guardando...' : <><Check className="w-3.5 h-3.5" /> Guardar</>}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            p.current_status
+              ? <p className="text-sm text-foreground whitespace-pre-line">{p.current_status}</p>
+              : <p className="text-sm text-muted-foreground italic">Sin estado actual registrado. Haz clic en "Editar" para agregar.</p>
+          )}
+        </div>
       </div>
 
-      {/* Tabs */}
-      <Tabs defaultValue="consultations" className="w-full">
-        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 bg-muted rounded-xl">
-          <TabsTrigger value="consultations" data-testid="tab-consultations" className="rounded-lg text-xs sm:text-sm">Consultas</TabsTrigger>
-          <TabsTrigger value="appointments" data-testid="tab-appointments" className="rounded-lg text-xs sm:text-sm">Citas</TabsTrigger>
-          <TabsTrigger value="prescriptions" data-testid="tab-prescriptions" className="rounded-lg text-xs sm:text-sm">Recetas</TabsTrigger>
-          <TabsTrigger value="files" data-testid="tab-files" className="rounded-lg text-xs sm:text-sm">Archivos</TabsTrigger>
-        </TabsList>
+      {/* ── Tabs ── */}
+      <div className="flex gap-1 bg-muted p-1 rounded-2xl overflow-x-auto">
+        {TABS.map(({ id }) => (
+          <button key={id} onClick={() => setTab(id)}
+                  className={`flex-shrink-0 px-4 py-2 rounded-xl text-sm font-medium transition-all whitespace-nowrap ${
+                    tab === id ? 'bg-white text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                  }`}>
+            {tabLabel(id)}
+          </button>
+        ))}
+      </div>
 
-        {/* CONSULTATIONS TAB */}
-        <TabsContent value="consultations" className="mt-6">
-          <Card className="border-border shadow-card rounded-2xl">
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="text-xl font-heading">Historial de Consultas</CardTitle>
-              <Button data-testid="new-consultation-button" onClick={() => { setConsultationForm({ diagnosis: '', treatment: '', notes: '' }); setShowConsultationDialog(true); }} className="rounded-full bg-primary text-white hover:bg-primary/90">
-                <Plus className="w-5 h-5 mr-2" />Nueva Consulta
-              </Button>
-            </CardHeader>
-            <CardContent>
-              {/* Buscador de consultas */}
-              {consultations.length > 0 && (
-                <div className="relative mb-4">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Buscar por diagnóstico, tratamiento o notas..."
-                    value={consultationSearch}
-                    onChange={e => setConsultationSearch(e.target.value)}
-                    className="pl-9 pr-8 rounded-xl h-10 bg-[#FAF9F6] border-[#E5E0D6]"
-                  />
-                  {consultationSearch && (
-                    <button onClick={() => setConsultationSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-charcoal-700">
-                      <X className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
-              )}
-              {consultations.length === 0 ? (
-                <div className="text-center py-8"><FileText className="w-12 h-12 text-muted-foreground mx-auto mb-3" /><p className="text-muted-foreground">No hay consultas registradas</p></div>
-              ) : (
-                <div className="space-y-4">
-                  {consultations
-                    .filter(c => !consultationSearch ||
-                      c.diagnosis.toLowerCase().includes(consultationSearch.toLowerCase()) ||
-                      c.treatment.toLowerCase().includes(consultationSearch.toLowerCase()) ||
-                      c.notes.toLowerCase().includes(consultationSearch.toLowerCase()))
-                    .map((c) => (
-                    <div key={c.id} data-testid={`consultation-item-${c.id}`} className="p-4 bg-muted rounded-xl border-l-4 border-primary">
-                      <div className="flex items-start justify-between mb-2">
-                        <p className="text-sm text-muted-foreground">{format(new Date(c.date), "d 'de' MMMM, yyyy - HH:mm", { locale: es })}</p>
-                        <div className="flex gap-2">
-                          <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-charcoal-600 hover:text-primary" onClick={() => { setEditingId(c.id); setConsultationForm({ diagnosis: c.diagnosis, treatment: c.treatment, notes: c.notes }); setShowEditConsultation(true); }}>
-                            <Edit className="w-4 h-4" />
-                          </Button>
-                          <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-charcoal-600 hover:text-red-500" onClick={() => confirmDelete('consultation', c.id, `Consulta del ${format(new Date(c.date), "d/MM/yyyy")}`)}>
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        </div>
-                      </div>
-                      <h4 className="font-semibold text-charcoal-800 mb-1">Diagnóstico: {c.diagnosis}</h4>
-                      <p className="text-sm text-charcoal-600 mb-2">Tratamiento: {c.treatment}</p>
-                      <p className="text-sm text-muted-foreground">{c.notes}</p>
-                    </div>
-                  ))}
-                  {consultationSearch && consultations.filter(c =>
-                    c.diagnosis.toLowerCase().includes(consultationSearch.toLowerCase()) ||
-                    c.treatment.toLowerCase().includes(consultationSearch.toLowerCase()) ||
-                    c.notes.toLowerCase().includes(consultationSearch.toLowerCase())).length === 0 && (
-                    <p className="text-sm text-muted-foreground text-center py-6">Sin resultados para "{consultationSearch}"</p>
-                  )}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* APPOINTMENTS TAB */}
-        <TabsContent value="appointments" className="mt-6">
-          <Card className="border-border shadow-card rounded-2xl">
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="text-xl font-heading">Citas Programadas</CardTitle>
-              <Button data-testid="new-appointment-button" onClick={() => { setAppointmentForm({ date: '', reason: '', notes: '' }); setShowAppointmentDialog(true); }} className="rounded-full bg-primary text-white hover:bg-primary/90">
-                <Plus className="w-5 h-5 mr-2" />Nueva Cita
-              </Button>
-            </CardHeader>
-            <CardContent>
-              {appointments.length === 0 ? (
-                <div className="text-center py-8"><Calendar className="w-12 h-12 text-muted-foreground mx-auto mb-3" /><p className="text-muted-foreground">No hay citas programadas</p></div>
-              ) : (
-                <div className="space-y-3">
-                  {appointments.map((a) => (
-                    <div key={a.id} data-testid={`appointment-item-${a.id}`} className="p-4 bg-muted rounded-xl flex items-start justify-between">
-                      <div className="flex-1">
-                        <p className="font-semibold text-charcoal-800">{a.reason}</p>
-                        <p className="text-sm text-muted-foreground mt-1">{format(new Date(a.date), "d 'de' MMMM, yyyy - HH:mm", { locale: es })}</p>
-                        {a.notes && <p className="text-sm text-charcoal-600 mt-2">{a.notes}</p>}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Badge variant={a.status === 'scheduled' ? 'default' : 'secondary'} className="rounded-full">{a.status === 'scheduled' ? 'Programada' : 'Completada'}</Badge>
-                        <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-charcoal-600 hover:text-primary" onClick={() => { setEditingId(a.id); setAppointmentForm({ date: new Date(a.date).toISOString().slice(0, 16), reason: a.reason, notes: a.notes || '', status: a.status }); setShowEditAppointment(true); }}>
-                          <Edit className="w-4 h-4" />
-                        </Button>
-                        <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-charcoal-600 hover:text-red-500" onClick={() => confirmDelete('appointment', a.id, `Cita: ${a.reason}`)}>
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* PRESCRIPTIONS TAB */}
-        <TabsContent value="prescriptions" className="mt-6">
-          <Card className="border-border shadow-card rounded-2xl">
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="text-xl font-heading">Recetas Médicas</CardTitle>
-              <Button data-testid="new-prescription-button" onClick={() => { setPrescriptionForm({ medications: '', instructions: '', diagnosis: '' }); setShowPrescriptionDialog(true); }} className="rounded-full bg-primary text-white hover:bg-primary/90">
-                <Plus className="w-5 h-5 mr-2" />Nueva Receta
-              </Button>
-            </CardHeader>
-            <CardContent>
-              {prescriptions.length === 0 ? (
-                <div className="text-center py-8"><FileText className="w-12 h-12 text-muted-foreground mx-auto mb-3" /><p className="text-muted-foreground">No hay recetas registradas</p></div>
-              ) : (
-                <div className="space-y-4">
-                  {prescriptions.map((p) => (
-                    <div key={p.id} data-testid={`prescription-item-${p.id}`} className="p-4 bg-muted rounded-xl border-l-4 border-secondary">
-                      <div className="flex items-center justify-between mb-2">
-                        <p className="text-sm text-muted-foreground">{format(new Date(p.date), "d 'de' MMMM, yyyy", { locale: es })}</p>
-                        <div className="flex gap-2">
-                          <Button size="sm" variant="outline" className="rounded-full border-secondary text-secondary hover:bg-secondary/10" onClick={() => handlePrintPrescription(p.id)}>
-                            <Printer className="w-4 h-4 mr-1" />Imprimir
-                          </Button>
-                          <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-charcoal-600 hover:text-primary" onClick={() => { setEditingId(p.id); setPrescriptionForm({ medications: p.medications, instructions: p.instructions, diagnosis: p.diagnosis }); setShowEditPrescription(true); }}>
-                            <Edit className="w-4 h-4" />
-                          </Button>
-                          <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-charcoal-600 hover:text-red-500" onClick={() => confirmDelete('prescription', p.id, `Receta del ${format(new Date(p.date), "d/MM/yyyy")}`)}>
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        </div>
-                      </div>
-                      <h4 className="font-semibold text-charcoal-800 mb-1">Diagnóstico: {p.diagnosis}</h4>
-                      <p className="text-sm text-charcoal-600 mb-2 whitespace-pre-wrap"><strong>Medicamentos:</strong> {p.medications}</p>
-                      <p className="text-sm text-muted-foreground whitespace-pre-wrap"><strong>Instrucciones:</strong> {p.instructions}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* FILES TAB */}
-        <TabsContent value="files" className="mt-6">
-          <Card className="border-border shadow-card rounded-2xl">
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="text-xl font-heading">Archivos y Estudios</CardTitle>
-              <Button data-testid="upload-file-button" onClick={() => document.getElementById('file-upload').click()} disabled={uploading} className="rounded-full bg-primary text-white hover:bg-primary/90">
-                <Upload className="w-5 h-5 mr-2" />{uploading ? 'Subiendo...' : 'Subir Archivo'}
-              </Button>
-              <input id="file-upload" type="file" accept="image/*,.pdf" onChange={handleFileUpload} style={{ display: 'none' }} data-testid="file-upload-input" />
-            </CardHeader>
-            <CardContent>
-              {files.length === 0 ? (
-                <div className="text-center py-8"><ImageIcon className="w-12 h-12 text-muted-foreground mx-auto mb-3" /><p className="text-muted-foreground mb-4">No hay archivos subidos aun</p></div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {files.map((file) => {
-                    const isPDF = file.file_type === 'application/pdf';
-                    const isImage = file.file_type?.startsWith('image/');
-                    return (
-                      <div key={file.id} data-testid={`file-item-${file.id}`} className="p-4 bg-muted rounded-xl border border-border">
-                        <div className="flex items-start justify-between mb-3">
-                          <div className="flex items-center gap-3">
-                            <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${isPDF ? 'bg-red-100' : 'bg-primary/10'}`}>
-                              {isPDF
-                                ? <FileText className="w-5 h-5 text-red-500" />
-                                : <ImageIcon className="w-5 h-5 text-primary" />}
-                            </div>
-                            <div>
-                              <p className="font-medium text-charcoal-800 text-sm">{file.file_name}</p>
-                              <p className="text-xs text-muted-foreground">{format(new Date(file.created_at), "d 'de' MMMM, yyyy", { locale: es })}</p>
-                              {isPDF && <span className="text-xs font-medium text-red-500 uppercase">PDF</span>}
-                            </div>
-                          </div>
-                          <div className="flex gap-1">
-                            {(isPDF || isImage) && (
-                              <a href={file.file_url} target="_blank" rel="noopener noreferrer">
-                                <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-charcoal-600 hover:text-primary" title="Abrir archivo">
-                                  <ExternalLink className="w-4 h-4" />
-                                </Button>
-                              </a>
-                            )}
-                            <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-charcoal-600 hover:text-red-500" onClick={() => confirmDelete('file', file.id, file.file_name)}>
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          </div>
-                        </div>
-                        {isImage && <img src={file.file_url} alt={file.file_name} className="w-full h-40 object-cover rounded-lg" />}
-                        {isPDF && (
-                          <a href={file.file_url} target="_blank" rel="noopener noreferrer"
-                            className="flex items-center justify-center gap-2 w-full h-20 bg-red-50 border border-red-100 rounded-lg text-red-500 hover:bg-red-100 transition-colors text-sm font-medium">
-                            <FileText className="w-5 h-5" />
-                            Ver PDF
-                          </a>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
-
-      {/* Create Medical History Entry Dialog */}
-      <Dialog open={showHistoryDialog} onOpenChange={setShowHistoryDialog}>
-        <DialogContent className="sm:max-w-[500px] rounded-2xl">
-          <DialogHeader>
-            <DialogTitle className="text-2xl font-heading">Nuevo Antecedente</DialogTitle>
-            <DialogDescription>Registra un antecedente médico del paciente</DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleCreateHistoryEntry} className="space-y-4 mt-4">
-            <div className="space-y-2">
-              <Label>Categoría</Label>
-              <select
-                value={historyForm.category}
-                onChange={e => setHistoryForm({ ...historyForm, category: e.target.value })}
-                className="w-full rounded-xl h-12 px-3 bg-[#FAF9F6] border border-[#E5E0D6] text-sm text-charcoal-800 focus:outline-none focus:ring-2 focus:ring-primary/30">
-                {HISTORY_CATEGORIES.map(cat => (
-                  <option key={cat.value} value={cat.value}>{cat.label}</option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-2">
-              <Label>Descripción</Label>
-              <Textarea
-                value={historyForm.description}
-                onChange={e => setHistoryForm({ ...historyForm, description: e.target.value })}
-                required
-                rows={3}
-                placeholder="Ej: Diabetes tipo 2 diagnosticada en 2020"
-                className="rounded-xl bg-[#FAF9F6] border-[#E5E0D6]"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Fecha <span className="text-muted-foreground text-xs">(opcional, por defecto hoy)</span></Label>
-              <Input
-                type="date"
-                value={historyForm.date}
-                onChange={e => setHistoryForm({ ...historyForm, date: e.target.value })}
-                className="rounded-xl h-12 bg-[#FAF9F6] border-[#E5E0D6]"
-              />
-            </div>
-            <Button type="submit" className="w-full h-12 rounded-full bg-primary text-white hover:bg-primary/90">Registrar Antecedente</Button>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* Edit Medical History Entry Dialog */}
-      <Dialog open={showEditHistoryDialog} onOpenChange={setShowEditHistoryDialog}>
-        <DialogContent className="sm:max-w-[500px] rounded-2xl">
-          <DialogHeader>
-            <DialogTitle className="text-2xl font-heading">Editar Antecedente</DialogTitle>
-            <DialogDescription>Modifica el antecedente médico</DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleEditHistoryEntry} className="space-y-4 mt-4">
-            <div className="space-y-2">
-              <Label>Categoría</Label>
-              <select
-                value={historyForm.category}
-                onChange={e => setHistoryForm({ ...historyForm, category: e.target.value })}
-                className="w-full rounded-xl h-12 px-3 bg-[#FAF9F6] border border-[#E5E0D6] text-sm text-charcoal-800 focus:outline-none focus:ring-2 focus:ring-primary/30">
-                {HISTORY_CATEGORIES.map(cat => (
-                  <option key={cat.value} value={cat.value}>{cat.label}</option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-2">
-              <Label>Descripción</Label>
-              <Textarea
-                value={historyForm.description}
-                onChange={e => setHistoryForm({ ...historyForm, description: e.target.value })}
-                required
-                rows={3}
-                className="rounded-xl bg-[#FAF9F6] border-[#E5E0D6]"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Fecha</Label>
-              <Input
-                type="date"
-                value={historyForm.date}
-                onChange={e => setHistoryForm({ ...historyForm, date: e.target.value })}
-                className="rounded-xl h-12 bg-[#FAF9F6] border-[#E5E0D6]"
-              />
-            </div>
-            <Button type="submit" className="w-full h-12 rounded-full bg-primary text-white hover:bg-primary/90">Guardar Cambios</Button>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* Create Consultation Dialog */}
-      <Dialog open={showConsultationDialog} onOpenChange={setShowConsultationDialog}>
-        <DialogContent className="sm:max-w-[600px] rounded-2xl">
-          <DialogHeader><DialogTitle className="text-2xl font-heading">Nueva Consulta</DialogTitle><DialogDescription>Registra diagnóstico, tratamiento y notas</DialogDescription></DialogHeader>
-          <form onSubmit={handleCreateConsultation} className="space-y-4 mt-4">
-            <div className="space-y-2"><Label>Diagnóstico</Label><Input data-testid="consultation-diagnosis-input" value={consultationForm.diagnosis} onChange={(e) => setConsultationForm({ ...consultationForm, diagnosis: e.target.value })} required className="rounded-xl h-12 bg-[#FAF9F6] border-[#E5E0D6]" /></div>
-            <div className="space-y-2"><Label>Tratamiento</Label><Input data-testid="consultation-treatment-input" value={consultationForm.treatment} onChange={(e) => setConsultationForm({ ...consultationForm, treatment: e.target.value })} required className="rounded-xl h-12 bg-[#FAF9F6] border-[#E5E0D6]" /></div>
-            <div className="space-y-2"><Label>Notas de Evolución</Label><Textarea data-testid="consultation-notes-input" value={consultationForm.notes} onChange={(e) => setConsultationForm({ ...consultationForm, notes: e.target.value })} required rows={4} className="rounded-xl bg-[#FAF9F6] border-[#E5E0D6]" /></div>
-            <Button data-testid="submit-consultation-button" type="submit" className="w-full h-12 rounded-full bg-primary text-white hover:bg-primary/90">Registrar Consulta</Button>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* Edit Consultation Dialog */}
-      <Dialog open={showEditConsultation} onOpenChange={setShowEditConsultation}>
-        <DialogContent className="sm:max-w-[600px] rounded-2xl">
-          <DialogHeader><DialogTitle className="text-2xl font-heading">Editar Consulta</DialogTitle><DialogDescription>Modifica los datos de la consulta</DialogDescription></DialogHeader>
-          <form onSubmit={handleEditConsultation} className="space-y-4 mt-4">
-            <div className="space-y-2"><Label>Diagnóstico</Label><Input value={consultationForm.diagnosis} onChange={(e) => setConsultationForm({ ...consultationForm, diagnosis: e.target.value })} required className="rounded-xl h-12 bg-[#FAF9F6] border-[#E5E0D6]" /></div>
-            <div className="space-y-2"><Label>Tratamiento</Label><Input value={consultationForm.treatment} onChange={(e) => setConsultationForm({ ...consultationForm, treatment: e.target.value })} required className="rounded-xl h-12 bg-[#FAF9F6] border-[#E5E0D6]" /></div>
-            <div className="space-y-2"><Label>Notas</Label><Textarea value={consultationForm.notes} onChange={(e) => setConsultationForm({ ...consultationForm, notes: e.target.value })} required rows={4} className="rounded-xl bg-[#FAF9F6] border-[#E5E0D6]" /></div>
-            <Button type="submit" className="w-full h-12 rounded-full bg-primary text-white hover:bg-primary/90">Guardar Cambios</Button>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* Create Appointment Dialog */}
-      <Dialog open={showAppointmentDialog} onOpenChange={setShowAppointmentDialog}>
-        <DialogContent className="sm:max-w-[600px] rounded-2xl">
-          <DialogHeader><DialogTitle className="text-2xl font-heading">Agendar Cita</DialogTitle><DialogDescription>Programa una nueva cita para el paciente</DialogDescription></DialogHeader>
-          <form onSubmit={handleCreateAppointment} className="space-y-4 mt-4">
-            <div className="space-y-2"><Label>Fecha y Hora</Label><Input data-testid="appointment-date-input" type="datetime-local" value={appointmentForm.date} onChange={(e) => setAppointmentForm({ ...appointmentForm, date: e.target.value })} required className="rounded-xl h-12 bg-[#FAF9F6] border-[#E5E0D6]" /></div>
-            <div className="space-y-2"><Label>Motivo</Label><Input data-testid="appointment-reason-input" value={appointmentForm.reason} onChange={(e) => setAppointmentForm({ ...appointmentForm, reason: e.target.value })} required className="rounded-xl h-12 bg-[#FAF9F6] border-[#E5E0D6]" /></div>
-            <div className="space-y-2"><Label>Notas</Label><Textarea data-testid="appointment-notes-input" value={appointmentForm.notes} onChange={(e) => setAppointmentForm({ ...appointmentForm, notes: e.target.value })} rows={3} className="rounded-xl bg-[#FAF9F6] border-[#E5E0D6]" /></div>
-            <Button data-testid="submit-appointment-button" type="submit" className="w-full h-12 rounded-full bg-primary text-white hover:bg-primary/90">Agendar Cita</Button>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* Edit Appointment Dialog */}
-      <Dialog open={showEditAppointment} onOpenChange={setShowEditAppointment}>
-        <DialogContent className="sm:max-w-[600px] rounded-2xl">
-          <DialogHeader><DialogTitle className="text-2xl font-heading">Editar Cita</DialogTitle><DialogDescription>Modifica los datos de la cita</DialogDescription></DialogHeader>
-          <form onSubmit={handleEditAppointment} className="space-y-4 mt-4">
-            <div className="space-y-2"><Label>Fecha y Hora</Label><Input type="datetime-local" value={appointmentForm.date} onChange={(e) => setAppointmentForm({ ...appointmentForm, date: e.target.value })} required className="rounded-xl h-12 bg-[#FAF9F6] border-[#E5E0D6]" /></div>
-            <div className="space-y-2"><Label>Motivo</Label><Input value={appointmentForm.reason} onChange={(e) => setAppointmentForm({ ...appointmentForm, reason: e.target.value })} required className="rounded-xl h-12 bg-[#FAF9F6] border-[#E5E0D6]" /></div>
-            <div className="space-y-2">
-              <Label>Estado</Label>
-              <select value={appointmentForm.status || 'scheduled'} onChange={(e) => setAppointmentForm({ ...appointmentForm, status: e.target.value })} className="w-full h-12 rounded-xl bg-[#FAF9F6] border border-[#E5E0D6] px-3">
-                <option value="scheduled">Programada</option>
-                <option value="completed">Completada</option>
-                <option value="cancelled">Cancelada</option>
-              </select>
-            </div>
-            <div className="space-y-2"><Label>Notas</Label><Textarea value={appointmentForm.notes} onChange={(e) => setAppointmentForm({ ...appointmentForm, notes: e.target.value })} rows={3} className="rounded-xl bg-[#FAF9F6] border-[#E5E0D6]" /></div>
-            <Button type="submit" className="w-full h-12 rounded-full bg-primary text-white hover:bg-primary/90">Guardar Cambios</Button>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* Create Prescription Dialog */}
-      <Dialog open={showPrescriptionDialog} onOpenChange={setShowPrescriptionDialog}>
-        <DialogContent className="sm:max-w-[600px] rounded-2xl">
-          <DialogHeader><DialogTitle className="text-2xl font-heading">Nueva Receta</DialogTitle><DialogDescription>Crea una receta medica para el paciente</DialogDescription></DialogHeader>
-          <form onSubmit={handleCreatePrescription} className="space-y-4 mt-4">
-            <div className="space-y-2"><Label>Diagnóstico</Label><Input data-testid="prescription-diagnosis-input" value={prescriptionForm.diagnosis} onChange={(e) => setPrescriptionForm({ ...prescriptionForm, diagnosis: e.target.value })} required className="rounded-xl h-12 bg-[#FAF9F6] border-[#E5E0D6]" /></div>
-            <div className="space-y-2"><Label>Medicamentos</Label><Textarea data-testid="prescription-medications-input" value={prescriptionForm.medications} onChange={(e) => setPrescriptionForm({ ...prescriptionForm, medications: e.target.value })} required rows={4} placeholder="Ej: Ibuprofeno 600mg - 1 cada 8 horas" className="rounded-xl bg-[#FAF9F6] border-[#E5E0D6]" /></div>
-            <div className="space-y-2"><Label>Instrucciones</Label><Textarea data-testid="prescription-instructions-input" value={prescriptionForm.instructions} onChange={(e) => setPrescriptionForm({ ...prescriptionForm, instructions: e.target.value })} required rows={4} placeholder="Ej: Tomar con alimentos. Reposo 5 dias." className="rounded-xl bg-[#FAF9F6] border-[#E5E0D6]" /></div>
-            <Button data-testid="submit-prescription-button" type="submit" className="w-full h-12 rounded-full bg-primary text-white hover:bg-primary/90">Crear Receta</Button>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* Edit Prescription Dialog */}
-      <Dialog open={showEditPrescription} onOpenChange={setShowEditPrescription}>
-        <DialogContent className="sm:max-w-[600px] rounded-2xl">
-          <DialogHeader><DialogTitle className="text-2xl font-heading">Editar Receta</DialogTitle><DialogDescription>Modifica los datos de la receta</DialogDescription></DialogHeader>
-          <form onSubmit={handleEditPrescription} className="space-y-4 mt-4">
-            <div className="space-y-2"><Label>Diagnóstico</Label><Input value={prescriptionForm.diagnosis} onChange={(e) => setPrescriptionForm({ ...prescriptionForm, diagnosis: e.target.value })} required className="rounded-xl h-12 bg-[#FAF9F6] border-[#E5E0D6]" /></div>
-            <div className="space-y-2"><Label>Medicamentos</Label><Textarea value={prescriptionForm.medications} onChange={(e) => setPrescriptionForm({ ...prescriptionForm, medications: e.target.value })} required rows={4} className="rounded-xl bg-[#FAF9F6] border-[#E5E0D6]" /></div>
-            <div className="space-y-2"><Label>Instrucciones</Label><Textarea value={prescriptionForm.instructions} onChange={(e) => setPrescriptionForm({ ...prescriptionForm, instructions: e.target.value })} required rows={4} className="rounded-xl bg-[#FAF9F6] border-[#E5E0D6]" /></div>
-            <Button type="submit" className="w-full h-12 rounded-full bg-primary text-white hover:bg-primary/90">Guardar Cambios</Button>
-          </form>
-        </DialogContent>
-      </Dialog>
+      {/* ── Contenido ── */}
+      <div className="bg-muted/30 rounded-2xl p-4 min-h-[300px]">
+        {tab === 'indicaciones' && <IndicacionesPanel patientId={patientId} labels={labels} />}
+        {tab === 'historial'    && <HistorialPanel    patientId={patientId} />}
+        {tab === 'archivos'     && <ArchivosPanel     patientId={patientId} />}
+        {tab === 'citas'        && <CitasPanel        patientId={patientId} />}
+      </div>
     </div>
   );
 };

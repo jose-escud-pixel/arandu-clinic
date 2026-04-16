@@ -1,137 +1,134 @@
 import React, { useState } from 'react';
+import { api } from '../lib/api';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
-import { api } from '../lib/api';
-import { toast } from 'sonner';
-import { Activity } from 'lucide-react';
+import { LogIn, Eye, EyeOff } from 'lucide-react';
 
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
+
+/**
+ * LoginPage — solo email + contraseña.
+ * La selección / cambio de empresa ocurre DENTRO del app (sidebar).
+ */
 const LoginPage = ({ onLogin }) => {
-  const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [name, setName] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  const handleSubmit = async (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
+    if (!email || !password) return;
     setLoading(true);
-
+    setError('');
     try {
-      if (isLogin) {
-        const data = await api.auth.login(email, password);
-        toast.success('Bienvenido!');
-        onLogin(data.token, data.doctor);
+      const data = await api.auth.login(email, password);
+      if (data.token) {
+        onLogin(data.token, data.doctor, data.empresas || []);
       } else {
-        const data = await api.auth.register(email, password, name);
-        if (data.pending) {
-          toast.success('Registro enviado. El administrador debe aprobar tu cuenta.');
-          setIsLogin(true);
-          setEmail('');
-          setPassword('');
-          setName('');
-        } else {
-          toast.success('Cuenta creada exitosamente!');
-          onLogin(data.token, data.doctor);
-        }
+        setError('Respuesta inválida del servidor');
       }
-    } catch (error) {
-      toast.error(error.response?.data?.detail || 'Error en la autenticacion');
+    } catch (err) {
+      const msg = err?.response?.data?.detail || 'Email o contraseña incorrectos';
+      setError(msg);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-primary rounded-2xl mb-4">
-            <Activity className="w-8 h-8 text-white" />
-          </div>
-          <h1 className="text-4xl font-bold font-heading tracking-tight text-charcoal-900 mb-2">
-            Arandu Clinic
-          </h1>
-          <p className="text-muted-foreground">Portal Médico</p>
-        </div>
+    <div className="min-h-screen flex items-center justify-center p-4 bg-background">
+      <div className="w-full max-w-sm">
+        {/* Card */}
+        <div className="bg-white rounded-2xl shadow-xl overflow-hidden border border-border">
+          {/* Header con barra de color primario */}
+          <div className="h-1.5 w-full" style={{ backgroundColor: 'var(--empresa-primary, #D97757)' }} />
 
-        <Card className="border-border shadow-card" data-testid="login-card">
-          <CardHeader>
-            <CardTitle className="text-2xl font-heading">
-              {isLogin ? 'Iniciar Sesión' : 'Crear Cuenta'}
-            </CardTitle>
-            <CardDescription>
-              {isLogin
-                ? 'Ingresa tus credenciales para acceder'
-                : 'Completa los datos para registrarte'}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              {!isLogin && (
-                <div className="space-y-2">
-                  <Label htmlFor="name">Nombre Completo</Label>
-                  <Input
-                    id="name"
-                    data-testid="register-name-input"
-                    type="text"
-                    placeholder="Dr. Juan Pérez"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    required={!isLogin}
-                    className="h-12 rounded-xl bg-[#FAF9F6] border-[#E5E0D6] focus:border-primary focus:ring-primary/20"
-                  />
-                </div>
-              )}
-              <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
+          <div className="px-8 pt-8 pb-8">
+            {/* Logo / título */}
+            <div className="text-center mb-8">
+              <h1 className="text-2xl font-bold font-heading text-foreground">
+                Portal Médico
+              </h1>
+              <p className="text-sm text-muted-foreground mt-1">
+                Ingresá con tu cuenta
+              </p>
+            </div>
+
+            <form onSubmit={handleLogin} className="space-y-4">
+              <div className="space-y-1">
+                <Label htmlFor="email" className="text-sm font-medium text-foreground">
+                  Email
+                </Label>
                 <Input
                   id="email"
-                  data-testid="login-email-input"
                   type="email"
-                  placeholder="doctor@clinica.com"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={e => setEmail(e.target.value)}
+                  placeholder="tu@email.com"
                   required
-                  className="h-12 rounded-xl bg-[#FAF9F6] border-[#E5E0D6] focus:border-primary focus:ring-primary/20"
+                  autoFocus
+                  className="rounded-xl border-border"
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="password">Contraseña</Label>
-                <Input
-                  id="password"
-                  data-testid="login-password-input"
-                  type="password"
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  className="h-12 rounded-xl bg-[#FAF9F6] border-[#E5E0D6] focus:border-primary focus:ring-primary/20"
-                />
+
+              <div className="space-y-1">
+                <Label htmlFor="password" className="text-sm font-medium text-foreground">
+                  Contraseña
+                </Label>
+                <div className="relative">
+                  <Input
+                    id="password"
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    required
+                    className="rounded-xl border-border pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
+
+              {error && (
+                <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-600">
+                  {error}
+                </div>
+              )}
+
               <Button
-                data-testid="login-submit-button"
                 type="submit"
-                className="w-full h-12 rounded-full bg-primary text-white hover:bg-primary/90 shadow-md transform hover:scale-[1.02] transition-transform"
-                disabled={loading}
+                disabled={loading || !email || !password}
+                className="w-full rounded-xl font-semibold py-2.5 gap-2"
+                style={{ backgroundColor: 'var(--empresa-primary, #D97757)', color: '#fff' }}
               >
-                {loading ? 'Cargando...' : isLogin ? 'Iniciar Sesión' : 'Crear Cuenta'}
+                {loading ? (
+                  <span className="flex items-center gap-2 justify-center">
+                    <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                    Ingresando...
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-2 justify-center">
+                    <LogIn className="w-4 h-4" />
+                    Ingresar
+                  </span>
+                )}
               </Button>
             </form>
+          </div>
+        </div>
 
-            <div className="mt-6 text-center">
-              <button
-                data-testid="toggle-auth-mode-button"
-                type="button"
-                onClick={() => setIsLogin(!isLogin)}
-                className="text-sm text-primary hover:underline"
-              >
-                {isLogin ? '¿No tienes cuenta? Regístrate' : '¿Ya tienes cuenta? Inicia sesión'}
-              </button>
-            </div>
-          </CardContent>
-        </Card>
+        <p className="text-center text-xs text-muted-foreground mt-6">
+          Portal Médico · {new Date().getFullYear()}
+        </p>
       </div>
     </div>
   );

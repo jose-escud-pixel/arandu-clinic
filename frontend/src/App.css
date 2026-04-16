@@ -1,3 +1,209 @@
 .App {
   min-height: 100vh;
 }
+
+/* ══════════════════════════════════════════════════
+   TEMA BASE (arandu-clinic) — Variables CSS
+   ══════════════════════════════════════════════════ */
+:root {
+  --empresa-primary: #D97757;
+  --empresa-secondary: #4B7F52;
+  --empresa-bg: #FDFCF8;
+  --empresa-text: #2D2A26;
+  --empresa-muted: #F5F2EB;
+  --empresa-border: #E5E0D6;
+}
+
+/* ══════════════════════════════════════════════════
+   TEMA EQUILIBRIO — Rosado / Verde / Negro
+   ══════════════════════════════════════════════════ */
+[data-empresa="equilibrio"] {
+  color-scheme: dark;
+}
+
+[data-empresa="equilibrio"] body {
+  background-color: #0D0D0D !important;
+  color: #FFFFFF !important;
+}
+
+/* Fondo principal */
+[data-empresa="equilibrio"] .bg-background,
+[data-empresa="equilibrio"] .min-h-screen {
+  background-color: #0D0D0D !important;
+}
+
+/* Sidebar / muted */
+[data-empresa="equilibrio"] .bg-muted {
+  background-color: #111111 !important;
+}
+
+[data-empresa="equilibrio"] .bg-muted\/30 {
+  background-color: rgba(17,17,17,0.3) !important;
+}
+
+/* Cards */
+[data-empresa="equilibrio"] .bg-white,
+[data-empresa="equilibrio"] .bg-card {
+  background-color: #1A1A1A !important;
+  color: #FFFFFF !important;
+}
+
+/* Borders */
+[data-empresa="equilibrio"] .border-border,
+[data-empresa="equilibrio"] .border-b,
+[data-empresa="equilibrio"] .border-t,
+[data-empresa="equilibrio"] .border {
+  border-color: #2A2A2A !important;
+}
+
+/* Texto principal */
+[data-empresa="equilibrio"] .text-foreground,
+[data-empresa="equilibrio"] .text-charcoal-800,
+[data-empresa="equilibrio"] .text-charcoal-900 {
+  color: #FFFFFF !important;
+}
+
+[data-empresa="equilibrio"] .text-muted-foreground {
+  color: #AAAAAA !important;
+}
+
+/* Primary color → rosado/magenta */
+[data-empresa="equilibrio"] .bg-primary,
+[data-empresa="equilibrio"] .hover\:bg-primary\/90:hover {
+  background-color: #D4238A !important;
+}
+
+[data-empresa="equilibrio"] .text-primary {
+  color: #D4238A !important;
+}
+
+[data-empresa="equilibrio"] .border-primary {
+  border-color: #D4238A !important;
+}
+
+[data-empresa="equilibrio"] .bg-primary\/10 {
+  background-color: rgba(212, 35, 138, 0.1) !important;
+}
+
+[data-empresa="equilibrio"] .bg-primary\/20 {
+  background-color: rgba(212, 35, 138, 0.2) !important;
+}
+
+[data-empresa="equilibrio"] .ring-primary {
+  --tw-ring-color: #D4238A !important;
+}
+
+/* Secondary → verde */
+[data-empresa="equilibrio"] .text-secondary,
+[data-empresa="equilibrio"] .bg-secondary {
+  color: #79B82C !important;
+}
+
+/* Inputs en tema oscuro */
+[data-empresa="equilibrio"] input,
+[data-empresa="equilibrio"] textarea,
+[data-empresa="equilibrio"] select {
+  background-color: #222222 !important;
+  color: #FFFFFF !important;
+  border-color: #2A2A2A !important;
+}
+
+[data-empresa="equilibrio"] input::placeholder,
+[data-empresa="equilibrio"] textarea::placeholder {
+  color: #888888 !important;
+}
+
+/* Botones ghost */
+[data-empresa="equilibrio"] .hover\:bg-white\/50:hover {
+  background-color: rgba(255,255,255,0.07) !important;
+}
+
+/* Badges / pills */
+[data-empresa="equilibrio"] .bg-primary\/10 {
+  background-color: rgba(212, 35, 138, 0.15) !important;
+}
+
+/* Dropdown / popover */
+[data-empresa="equilibrio"] [data-radix-popper-content-wrapper],
+[data-empresa="equilibrio"] .popover-content {
+  background-color: #1A1A1A !important;
+  border-color: #2A2A2A !important;
+  color: #FFFFFF !important;
+}
+
+/* Table rows */
+[data-empresa="equilibrio"] tr:hover {
+  background-color: rgba(255,255,255,0.05) !important;
+}
+
+[data-empresa="equilibrio"] th {
+  background-color: #111111 !important;
+  color: #AAAAAA !important;
+}
+
+/* Header empresa equilibrio */
+[data-empresa="equilibrio"] .empresa-header-title {
+  color: #D4238A !important;
+}
+
+[data-empresa="equilibrio"] .empresa-header-subtitle {
+  color: #79B82C !important;
+}
+
+/* ══════════════════════════════════════════════════
+   SELECTOR DE EMPRESA — UI
+   ══════════════════════════════════════════════════ */
+.empresa-selector {
+  position: relative;
+}
+
+.empresa-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+/* ══════════════════════════════════════════════════
+   NOTIFICACIONES
+   ══════════════════════════════════════════════════ */
+.notif-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--empresa-primary);
+  display: inline-block;
+}
+
+/* ══════════════════════════════════════════════════
+   FIRMA DIGITAL
+   ══════════════════════════════════════════════════ */
+.firma-container {
+  border: 2px dashed var(--empresa-border);
+  border-radius: 8px;
+  padding: 16px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.firma-container:hover {
+  border-color: var(--empresa-primary);
+}
+
+/* ══════════════════════════════════════════════════
+   ANIMACIONES
+   ══════════════════════════════════════════════════ */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.25s ease-out;
+}
