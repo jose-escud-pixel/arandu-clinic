@@ -57,31 +57,18 @@ function AppRoutes() {
   }, []); // eslint-disable-line
 
   const handleLogin = (newToken, doctorData, empresasData) => {
-  	localStorage.setItem('token', newToken);
-  	localStorage.setItem('doctor', JSON.stringify(doctorData));
-  	setToken(newToken);
-  	setDoctor(doctorData);
-  
-  	// Guardar lista de empresas
-  	if (empresasData && empresasData.length > 0) {
-    		setEmpresasList(empresasData);
-    
-    		// 🔥 FIX: Si es admin/doctor y tiene UNA sola empresa, aplicarla automáticamente
-    		if (doctorData.role !== 'super_admin' && empresasData.length === 1) {
-      			// Crear un objeto doctor con la empresa activa
-      			const doctorWithEmpresa = {
-        			...doctorData,
-        			empresa: empresasData[0],
-        			current_empresa_id: empresasData[0].id
-      			};
-      			applyFromUser(doctorWithEmpresa);
-    		} else {
-      			applyFromUser(doctorData);
-    		}
-  	} else {
-    		loadEmpresasList();
-    		applyFromUser(doctorData);
-  	}
+    localStorage.setItem('token', newToken);
+    localStorage.setItem('doctor', JSON.stringify(doctorData));
+    setToken(newToken);
+    setDoctor(doctorData);
+    // La API de login ya devuelve las empresas del usuario en empresasData
+    if (empresasData && empresasData.length > 0) {
+      setEmpresasList(empresasData);
+    } else {
+      // Fallback: cargar desde el endpoint de empresas
+      loadEmpresasList();
+    }
+    applyFromUser(doctorData);
   };
 
   const handleLogout = () => {

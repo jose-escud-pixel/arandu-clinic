@@ -56,15 +56,11 @@ export const EmpresaProvider = ({ children }) => {
 
   // Aplicar tema desde empresa en auth/me
   const applyFromUser = useCallback((userWithEmpresa) => {
-  	// 🔥 FIX: Si no tiene empresa pero tiene empresas[0], usar la primera
-  	if (userWithEmpresa?.empresa) {
-    		setAndApplyEmpresa(userWithEmpresa.empresa);
-  	} else if (userWithEmpresa?.empresas?.length > 0) {
-    		// Si es admin/doctor con una sola empresa, aplicarla
-    		setAndApplyEmpresa(userWithEmpresa.empresas[0]);
-  	} else {
-    		applyEmpresaTheme(DEFAULT_THEME);
-  	}
+    if (userWithEmpresa?.empresa) {
+      setAndApplyEmpresa(userWithEmpresa.empresa);
+    } else {
+      applyEmpresaTheme(DEFAULT_THEME);
+    }
   }, [setAndApplyEmpresa]);
 
   // Switch empresa (llama al backend, obtiene nuevo token)

@@ -623,28 +623,23 @@ async def login(input: DoctorLogin):
     role = doctor.get('role', 'doctor')
     empresa_id = doctor.get('empresa_id')
 
-    # 🔒 LÓGICA ESTRICTA: Solo super_admin ve múltiples empresas
+    # Cargar empresas accesibles
     accessible_empresas = []
-    
     if role == 'super_admin':
-        # Super admin ve TODAS las empresas activas
         empresas_raw = await db.empresas.find({"active": True}, {"_id": 0}).to_list(100)
         accessible_empresas = empresas_raw
-    else:
-        # Admins y doctores normales: SOLO ven su empresa asignada por empresa_id
-        # Se ignora el campo 'empresas' (lista) para forzar visualización única
-        if empresa_id:
-            emp = await db.empresas.find_one({"id": empresa_id}, {"_id": 0})
-            if emp:
-                accessible_empresas = [emp]
+    elif doctor.get('empresas'):
+        ids = doctor['empresas']
+        accessible_empresas = await db.empresas.find({"id": {"$in": ids}}, {"_id": 0}).to_list(100)
+    elif empresa_id:
+        emp = await db.empresas.find_one({"id": empresa_id}, {"_id": 0})
+        if emp:
+            accessible_empresas = [emp]
 
     token = create_token(doctor['id'], empresa_id, role)
     doctor.pop('password', None)
     if isinstance(doctor.get('created_at'), str):
-        try:
-            doctor['created_at'] = datetime.fromisoformat(doctor['created_at'])
-        except:
-            pass
+        doctor['created_at'] = datetime.fromisoformat(doctor['created_at'])
 
     return {"token": token, "doctor": doctor, "empresas": accessible_empresas}
 
