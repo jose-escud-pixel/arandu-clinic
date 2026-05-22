@@ -3,6 +3,10 @@ import axios from 'axios';
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
+// Timeout global: si el backend o el proxy no responden, axios corta a los 30s
+// y el formulario muestra un error en vez de quedar el spinner girando para siempre.
+axios.defaults.timeout = 30000;
+
 const getAuthHeader = () => {
   const token = localStorage.getItem('token');
   return token ? { Authorization: `Bearer ${token}` } : {};

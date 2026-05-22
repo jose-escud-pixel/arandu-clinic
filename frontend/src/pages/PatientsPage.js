@@ -43,15 +43,47 @@ const PatientModal = ({ patient, onClose, onSaved, labels }) => {
 
   const handleSave = async (e) => {
     e.preventDefault();
+    // Anti-doble-submit: si ya está guardando, ignorar el click
+    if (saving) return;
     if (!form.name.trim()) { setError('El nombre es requerido'); return; }
     setSaving(true); setError('');
     try {
-      const payload = { ...form, age: form.age ? parseInt(form.age) : undefined };
+      // Construir payload limpio: omitir campos vacíos para no enviar "" donde
+      // el backend espera int / float (age, peso) y evitar 422 que parecen
+      // colgarse cuando el proxy los procesa lento.
+      const payload = {};
+      Object.entries(form).forEach(([k, v]) => {
+        if (v === '' || v === null || v === undefined) return; // omitir vacíos
+        payload[k] = v;
+      });
+      if (form.age !== '' && form.age != null) {
+        const n = parseInt(form.age, 10);
+        if (!Number.isNaN(n)) payload.age = n; else delete payload.age;
+      }
+      if (form.peso !== '' && form.peso != null) {
+        const n = parseFloat(form.peso);
+        if (!Number.isNaN(n)) payload.peso = n; else delete payload.peso;
+      }
       if (isEdit) await api.patients.update(patient.id, payload);
       else        await api.patients.create(payload);
       onSaved(); onClose();
     } catch (err) {
-      setError(err?.response?.data?.detail || 'Error al guardar paciente');
+      // Mensajes más específicos según el tipo de fallo
+      let msg = err?.response?.data?.detail;
+      if (!msg) {
+        if (err?.code === 'ECONNABORTED' || /timeout/i.test(err?.message || '')) {
+          msg = 'El servidor tardó demasiado en responder. Intentá de nuevo.';
+        } else if (err?.message === 'Network Error') {
+          msg = 'No se pudo conectar con el servidor. Revisá tu conexión.';
+        } else {
+          msg = 'Error al guardar paciente';
+        }
+      }
+      // Si detail viene como array (validación FastAPI), tomar el primero legible
+      if (Array.isArray(msg)) msg = msg[0]?.msg || JSON.stringify(msg);
+      setError(typeof msg === 'string' ? msg : 'Error al guardar paciente');
+      // eslint-disable-next-line no-console
+      console.error('[PatientModal] save error', err);
     } finally { setSaving(false); }
   };
 
@@ -189,7 +221,7 @@ const PatientModal = ({ patient, onClose, onSaved, labels }) => {
           {/* ── Historial / antecedentes ── */}
           <div>
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-              Antecedentes / Historia médica
+              Antecedentes / Historial clínico
             </p>
             <textarea
               value={form.medical_history}

@@ -86,6 +86,38 @@ const AppointmentsPage = () => {
     } catch (error) { toast.error('Error al eliminar cita'); }
   };
 
+  // ── Cambio rápido de estado desde los checkboxes de la tarjeta ──
+  // "Realizada" → status "completed" (badge verde)
+  // "Cancelada" → status "cancelled" (badge rojo)
+  // Marcar uno desmarca el otro automáticamente. Volver a clickear
+  // el mismo regresa la cita a "scheduled".
+  const handleQuickStatus = async (appointment, target) => {
+    const next = appointment.status === target ? 'scheduled' : target;
+    // Optimistic update
+    setAppointments((prev) => prev.map((a) => (a.id === appointment.id ? { ...a, status: next } : a)));
+    try {
+      await api.appointments.update(appointment.id, { status: next });
+      const label = next === 'completed' ? 'Cita marcada como realizada'
+                  : next === 'cancelled' ? 'Cita marcada como cancelada'
+                  : 'Cita reactivada';
+      toast.success(label);
+    } catch (error) {
+      toast.error('No se pudo actualizar el estado');
+      // Revert
+      setAppointments((prev) => prev.map((a) => (a.id === appointment.id ? { ...a, status: appointment.status } : a)));
+    }
+  };
+
+  const getStatusBadge = (status) => {
+    if (status === 'completed') {
+      return <span className="inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold bg-green-100 text-green-700 border border-green-200">Completada</span>;
+    }
+    if (status === 'cancelled') {
+      return <span className="inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold bg-red-100 text-red-700 border border-red-200">Cancelada</span>;
+    }
+    return <span className="inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold bg-primary/10 text-primary border border-primary/20">Programada</span>;
+  };
+
   const getPatientName = (patientId) => {
     const patient = patients.find((p) => p.id === patientId);
     return patient ? patient.name : 'Desconocido';
@@ -217,9 +249,7 @@ const AppointmentsPage = () => {
                       <p className="text-xs mt-1 px-2 py-0.5 bg-primary/5 rounded-lg inline-block">{appointment.doctor_name}</p>
                     )}
                   </div>
-                  <Badge variant={appointment.status === 'scheduled' ? 'default' : 'secondary'} className="rounded-full">
-                    {appointment.status === 'scheduled' ? 'Programada' : appointment.status === 'completed' ? 'Completada' : 'Cancelada'}
-                  </Badge>
+                  {getStatusBadge(appointment.status)}
                 </div>
               </CardHeader>
               <CardContent>
@@ -227,6 +257,35 @@ const AppointmentsPage = () => {
                   <div><p className="text-sm text-muted-foreground">Hora</p><p className="text-base font-medium">{format(new Date(appointment.date), 'HH:mm')}</p></div>
                   <div><p className="text-sm text-muted-foreground">Motivo</p><p className="text-base font-medium">{appointment.reason}</p></div>
                   {appointment.notes && <div><p className="text-sm text-muted-foreground">Notas</p><p className="text-sm text-charcoal-600">{appointment.notes}</p></div>}
+
+                  {/* Checkboxes rápidos: Realizada / Cancelada (mutuamente excluyentes) */}
+                  <div className="flex flex-wrap items-center gap-4 pt-2 border-t border-border">
+                    <label
+                      data-testid={`appointment-realizada-${appointment.id}`}
+                      className="flex items-center gap-2 text-sm cursor-pointer select-none"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={appointment.status === 'completed'}
+                        onChange={() => handleQuickStatus(appointment, 'completed')}
+                        className="h-4 w-4 rounded border-border accent-green-600 cursor-pointer"
+                      />
+                      <span className={appointment.status === 'completed' ? 'text-green-700 font-medium' : 'text-charcoal-700'}>Realizada</span>
+                    </label>
+                    <label
+                      data-testid={`appointment-cancelada-${appointment.id}`}
+                      className="flex items-center gap-2 text-sm cursor-pointer select-none"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={appointment.status === 'cancelled'}
+                        onChange={() => handleQuickStatus(appointment, 'cancelled')}
+                        className="h-4 w-4 rounded border-border accent-red-600 cursor-pointer"
+                      />
+                      <span className={appointment.status === 'cancelled' ? 'text-red-700 font-medium' : 'text-charcoal-700'}>Cancelada</span>
+                    </label>
+                  </div>
+
                   <div className="flex gap-2 pt-2 border-t border-border">
                     <Button size="sm" variant="outline" className="flex-1 rounded-full text-primary border-primary hover:bg-primary/10" onClick={() => { setEditingId(appointment.id); setEditData({ date: new Date(appointment.date).toISOString().slice(0, 16), reason: appointment.reason, notes: appointment.notes || '', status: appointment.status }); setShowEditDialog(true); }}>
                       <Edit className="w-4 h-4 mr-1" />Editar

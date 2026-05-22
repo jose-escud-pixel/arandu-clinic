@@ -40,6 +40,11 @@ security = HTTPBearer()
 JWT_SECRET = os.environ.get('JWT_SECRET', 'clinic-multitenant-secret-change-in-prod')
 JWT_ALGORITHM = 'HS256'
 
+logger = logging.getLogger("arandu")
+if not logger.handlers:
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+
 # ═══════════════════════════════════════════════════════════════
 # MODELOS
 # ═══════════════════════════════════════════════════════════════
@@ -59,6 +64,10 @@ class Empresa(BaseModel):
     profesional_label: str = "Doctor"    # or "Fisioterapeuta"
     indicaciones_label: str = "Indicaciones"
     extended_patient: bool = False
+    # Modo de visibilidad de pacientes:
+    #   "private" → cada doctor sólo ve sus pacientes (admin ve todos). Caso Arandu Clinic.
+    #   "shared"  → todos los usuarios de la empresa ven todos los pacientes. Default para empresas nuevas.
+    patient_sharing_mode: str = "shared"
     active: bool = True
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -74,6 +83,7 @@ class EmpresaCreate(BaseModel):
     profesional_label: str = "Doctor"
     indicaciones_label: str = "Indicaciones"
     extended_patient: bool = False
+    patient_sharing_mode: str = "shared"   # nuevas empresas: pacientes compartidos por defecto
 
 class EmpresaUpdate(BaseModel):
     nombre: Optional[str] = None
@@ -86,6 +96,7 @@ class EmpresaUpdate(BaseModel):
     profesional_label: Optional[str] = None
     indicaciones_label: Optional[str] = None
     extended_patient: Optional[bool] = None
+    patient_sharing_mode: Optional[str] = None
     active: Optional[bool] = None
 
 class Doctor(BaseModel):
@@ -151,15 +162,17 @@ class Patient(BaseModel):
     empresa_id: str
     doctor_id: str
     name: str
-    age: int
-    cedula: str
+    # Todos los campos opcionales aceptan None / "" — evita 500 al guardar pacientes
+    # con datos parciales (la edad o la cédula pueden quedar vacíos al registrar).
+    age: Optional[int] = None
+    cedula: Optional[str] = ""
     nationality: Optional[str] = None
-    address: str
-    occupation: str
-    phone: str
+    address: Optional[str] = ""
+    occupation: Optional[str] = ""
+    phone: Optional[str] = ""
     insurance_name: Optional[str] = None
     insurance_number: Optional[str] = None
-    medical_history: str
+    medical_history: Optional[str] = ""
     status: str = "active"
     # Campos extendidos (Equilibrio)
     sexo: Optional[str] = None
@@ -414,6 +427,54 @@ def check_permission(user: dict, perm: str) -> bool:
         return True
     return user.get('permissions', {}).get(perm, False)
 
+# ── Permisos verticales ────────────────────────────────────────
+# Reglas de la jerarquía:
+#   super_admin > admin > doctor
+# Nadie puede degradar a alguien de su mismo rango o superior, ni degradarse
+# a sí mismo. Sólo se puede operar sobre usuarios de rango estrictamente
+# inferior (o sobre sí mismo en acciones que no impliquen degradación).
+ROLE_RANK = {"doctor": 1, "admin": 2, "super_admin": 3}
+
+def role_rank(role: Optional[str]) -> int:
+    return ROLE_RANK.get(role or "doctor", 1)
+
+def assert_can_manage_target(actor: dict, target: dict, action: str = "modificar"):
+    """
+    Verifica que el actor pueda actuar sobre target en acciones administrativas
+    *destructivas o que cambian su rol* (degradar, eliminar, deshabilitar,
+    rechazar, cambiar contraseña). NO usar para promociones — para eso usar
+    assert_can_change_role.
+    Reglas:
+    - Nadie puede actuar sobre sí mismo en acciones destructivas.
+    - El rango del actor debe ser estrictamente mayor al del target.
+    """
+    if target.get('id') == actor.get('id'):
+        raise HTTPException(403, f"No puedes {action} tu propia cuenta")
+    if role_rank(actor.get('role')) <= role_rank(target.get('role')):
+        raise HTTPException(403,
+            f"No puedes {action} a un usuario con rango igual o superior al tuyo")
+
+def assert_can_change_role(actor: dict, target: dict, new_role: str):
+    """
+    Reglas para cambiar el rol de target a new_role:
+    - No te puedes cambiar tu propio rol (ni para subir ni para bajar).
+    - Sólo puedes asignar roles de rango estrictamente inferior al tuyo.
+      (admin ⇒ sólo puede asignar 'doctor'; super_admin ⇒ 'admin' o 'doctor'.)
+    - Sólo puedes cambiar el rol de usuarios de rango estrictamente inferior
+      al tuyo.
+    """
+    if target.get('id') == actor.get('id'):
+        raise HTTPException(403, "No puedes cambiar tu propio rol")
+    if new_role not in ROLE_RANK:
+        raise HTTPException(400, "Rol inválido")
+    actor_rank = role_rank(actor.get('role'))
+    if role_rank(target.get('role')) >= actor_rank:
+        raise HTTPException(403,
+            "No puedes cambiar el rol de un usuario con rango igual o superior al tuyo")
+    if role_rank(new_role) >= actor_rank:
+        raise HTTPException(403,
+            "No puedes asignar un rol igual o superior al tuyo")
+
 async def log_activity(user_id: str, user_name: str, action: str, target_type: str,
                        target_id: str, details: str, empresa_id: Optional[str] = None):
     await db.activity_logs.insert_one({
@@ -441,6 +502,45 @@ def fix_datetime(record, fields):
             except:
                 pass
 
+async def get_empresa_sharing_mode(empresa_id: Optional[str]) -> str:
+    """
+    Devuelve "shared" o "private" según la empresa.
+    - Arandu Clinic (legacy): "private" — cada doctor ve sólo sus pacientes.
+    - Cualquier otra empresa: "shared" por defecto — todos los usuarios ven todos los pacientes.
+    El admin/super_admin siempre ve todo dentro de su empresa, independiente del modo.
+    """
+    if not empresa_id:
+        return "shared"
+    emp = await db.empresas.find_one(
+        {"id": empresa_id},
+        {"_id": 0, "patient_sharing_mode": 1, "slug": 1}
+    )
+    if not emp:
+        return "shared"
+    mode = emp.get("patient_sharing_mode")
+    if mode in ("shared", "private"):
+        return mode
+    # Sin campo → fallback por slug (Arandu = private, resto = shared)
+    return "private" if emp.get("slug") == "arandu-clinic" else "shared"
+
+async def get_patient_filter(user: dict) -> dict:
+    """
+    Construye el filtro de Mongo para listar/leer pacientes respetando:
+    - empresa actual del usuario
+    - rol (admin/super_admin ven todo en su empresa)
+    - empresa.patient_sharing_mode:
+        * "shared"  → todos los usuarios de la empresa ven todos los pacientes
+        * "private" → cada doctor sólo ve sus propios pacientes (legacy Arandu)
+    """
+    empresa_filter = get_empresa_filter(user)
+    if is_privileged(user):
+        return empresa_filter
+    eid = get_user_empresa_id(user)
+    mode = await get_empresa_sharing_mode(eid)
+    if mode == "shared":
+        return empresa_filter
+    return {**empresa_filter, "doctor_id": user['id']}
+
 async def get_empresa_config(empresa_id: Optional[str]) -> dict:
     """Returns empresa config dict. Falls back to default arandu config."""
     default = {
@@ -463,7 +563,7 @@ async def get_empresa_config(empresa_id: Optional[str]) -> dict:
 
 @app.on_event("startup")
 async def startup_event():
-    # arandu-clinic
+    # arandu-clinic — sistema original para doctores independientes (cada doctor ve sus pacientes)
     if not await db.empresas.find_one({"slug": "arandu-clinic"}):
         await db.empresas.insert_one({
             "id": str(uuid.uuid4()),
@@ -479,10 +579,11 @@ async def startup_event():
             "profesional_label": "Doctor",
             "indicaciones_label": "Indicaciones",
             "extended_patient": False,
+            "patient_sharing_mode": "private",
             "active": True,
             "created_at": datetime.now(timezone.utc).isoformat()
         })
-    # equilibrio
+    # equilibrio — clínica con varios profesionales: pacientes compartidos
     if not await db.empresas.find_one({"slug": "equilibrio"}):
         await db.empresas.insert_one({
             "id": str(uuid.uuid4()),
@@ -498,9 +599,22 @@ async def startup_event():
             "profesional_label": "Fisioterapeuta",
             "indicaciones_label": "Indicaciones",
             "extended_patient": True,
+            "patient_sharing_mode": "shared",
             "active": True,
             "created_at": datetime.now(timezone.utc).isoformat()
         })
+
+    # ── Backfill patient_sharing_mode para empresas existentes ──
+    # Arandu Clinic mantiene la lógica original (private). Cualquier otra empresa
+    # ya creada que no tenga el campo se asume "shared".
+    await db.empresas.update_many(
+        {"slug": "arandu-clinic", "patient_sharing_mode": {"$exists": False}},
+        {"$set": {"patient_sharing_mode": "private"}}
+    )
+    await db.empresas.update_many(
+        {"slug": {"$ne": "arandu-clinic"}, "patient_sharing_mode": {"$exists": False}},
+        {"$set": {"patient_sharing_mode": "shared"}}
+    )
 
     # ── Garantizar que jose@aranduinformatica.net sea super_admin ──────────
     SUPER_ADMIN_EMAIL = "jose@aranduinformatica.net"
@@ -943,6 +1057,12 @@ async def approve_user(uid: str, admin: dict = Depends(require_admin_or_super)):
 @api_router.put("/admin/users/{uid}/reject")
 async def reject_user(uid: str, admin: dict = Depends(require_admin_or_super)):
     empresa_filter = get_empresa_filter(admin)
+    target = await db.doctors.find_one({**empresa_filter, "id": uid},
+                                       {"_id": 0, "id": 1, "role": 1, "name": 1})
+    if not target:
+        raise HTTPException(404, "Usuario no encontrado")
+    # Permisos verticales
+    assert_can_manage_target(admin, target, "rechazar")
     result = await db.doctors.update_one({**empresa_filter, "id": uid}, {"$set": {"status": "rejected"}})
     if result.matched_count == 0:
         raise HTTPException(404, "Usuario no encontrado")
@@ -952,6 +1072,12 @@ async def reject_user(uid: str, admin: dict = Depends(require_admin_or_super)):
 
 @api_router.put("/admin/users/{uid}/change-password")
 async def admin_change_password(uid: str, input: AdminChangePassword, admin: dict = Depends(require_admin_or_super)):
+    target = await db.doctors.find_one({"id": uid}, {"_id": 0, "id": 1, "role": 1, "name": 1})
+    if not target:
+        raise HTTPException(404, "Usuario no encontrado")
+    # Permitir cambiarse a uno mismo la contraseña pasa por /auth/change-password.
+    # Aquí (admin actuando sobre otro) bloqueamos auto-cambio y actuar sobre pares/superiores.
+    assert_can_manage_target(admin, target, "cambiar la contraseña de")
     await db.doctors.update_one({"id": uid}, {"$set": {"password": hash_password(input.new_password)}})
     return {"message": "Contraseña actualizada"}
 
@@ -962,6 +1088,11 @@ async def change_role(uid: str, role: str, admin: dict = Depends(require_admin_o
         valid_roles.append('super_admin')
     if role not in valid_roles:
         raise HTTPException(400, "Rol inválido")
+    target = await db.doctors.find_one({"id": uid}, {"_id": 0, "id": 1, "role": 1, "name": 1})
+    if not target:
+        raise HTTPException(404, "Usuario no encontrado")
+    # Permisos verticales: no auto-cambio de rol y no cambiar a iguales/superiores
+    assert_can_change_role(admin, target, role)
     await db.doctors.update_one({"id": uid}, {"$set": {"role": role}})
     await log_activity(admin['id'], admin['name'], "update", "user", uid, f"Rol cambiado a {role}",
                        get_user_empresa_id(admin))
@@ -969,6 +1100,12 @@ async def change_role(uid: str, role: str, admin: dict = Depends(require_admin_o
 
 @api_router.put("/admin/users/{uid}/permissions")
 async def update_permissions(uid: str, input: UpdatePermissionsInput, admin: dict = Depends(require_admin_or_super)):
+    target = await db.doctors.find_one({"id": uid}, {"_id": 0, "id": 1, "role": 1, "name": 1})
+    if not target:
+        raise HTTPException(404, "Usuario no encontrado")
+    # Permisos verticales: un admin no puede tocar los permisos de otro admin
+    # ni los suyos (evita auto-perderse permisos sin querer).
+    assert_can_manage_target(admin, target, "modificar los permisos de")
     await db.doctors.update_one({"id": uid}, {"$set": {"permissions": input.permissions}})
     await log_activity(admin['id'], admin['name'], "update", "user", uid, "Permisos actualizados",
                        get_user_empresa_id(admin))
@@ -1030,11 +1167,11 @@ async def admin_create_user(input: dict, admin: dict = Depends(require_admin_or_
 @api_router.put("/admin/users/{uid}/toggle-status")
 async def toggle_user_status(uid: str, admin: dict = Depends(require_admin_or_super)):
     """Alterna estado del usuario entre 'active' y 'disabled'."""
-    if uid == admin['id']:
-        raise HTTPException(400, "No puedes deshabilitar tu propia cuenta")
-    target = await db.doctors.find_one({"id": uid}, {"_id": 0, "status": 1, "name": 1})
+    target = await db.doctors.find_one({"id": uid}, {"_id": 0, "id": 1, "role": 1, "status": 1, "name": 1})
     if not target:
         raise HTTPException(404, "Usuario no encontrado")
+    # Permisos verticales: no se puede deshabilitar a uno mismo ni a un par/superior
+    assert_can_manage_target(admin, target, "deshabilitar")
     new_status = "disabled" if target.get("status") == "active" else "active"
     await db.doctors.update_one({"id": uid}, {"$set": {"status": new_status}})
     action_label = "deshabilitado" if new_status == "disabled" else "habilitado"
@@ -1044,9 +1181,11 @@ async def toggle_user_status(uid: str, admin: dict = Depends(require_admin_or_su
 
 @api_router.delete("/admin/users/{uid}")
 async def delete_user(uid: str, admin: dict = Depends(require_admin_or_super)):
-    if uid == admin['id']:
-        raise HTTPException(400, "No puedes eliminar tu propia cuenta")
-    target = await db.doctors.find_one({"id": uid}, {"_id": 0, "name": 1})
+    target = await db.doctors.find_one({"id": uid}, {"_id": 0, "id": 1, "role": 1, "name": 1})
+    if not target:
+        raise HTTPException(404, "Usuario no encontrado")
+    # Permisos verticales: no auto-eliminación, no eliminar pares/superiores
+    assert_can_manage_target(admin, target, "eliminar")
     result = await db.doctors.delete_one({"id": uid})
     if result.deleted_count == 0:
         raise HTTPException(404, "Usuario no encontrado")
@@ -1083,15 +1222,34 @@ async def create_patient(input: PatientCreate, user: dict = Depends(get_current_
     if not eid:
         raise HTTPException(400, "Sin empresa activa")
     patient_dict = input.model_dump()
+    # Sanitizar valores vacíos que no deben llegar al modelo como string ""
+    for num_field in ("age",):
+        if patient_dict.get(num_field) in ("", None):
+            patient_dict[num_field] = None
+    if patient_dict.get("peso") in ("", None):
+        patient_dict["peso"] = None
     patient_dict['doctor_id'] = user['id']
     patient_dict['empresa_id'] = eid
-    patient_obj = Patient(**patient_dict)
+    try:
+        patient_obj = Patient(**patient_dict)
+    except Exception as e:
+        # Convertir errores de validación en 400 (en vez de 500) para que el
+        # frontend reciba un mensaje claro y no se quede el spinner girando.
+        raise HTTPException(400, f"Datos del paciente inválidos: {e}")
     doc = patient_obj.model_dump()
     doc['created_at'] = doc['created_at'].isoformat()
     doc['updated_at'] = doc['updated_at'].isoformat()
-    await db.patients.insert_one(doc)
-    await log_activity(user['id'], user['name'], "create", "patient", patient_obj.id,
-                       f"Paciente creado: {input.name}", eid)
+    try:
+        await db.patients.insert_one(doc)
+    except Exception as e:
+        logger.exception("[create_patient] insert_one falló")
+        raise HTTPException(500, f"No se pudo guardar el paciente: {e}")
+    try:
+        await log_activity(user['id'], user['name'], "create", "patient", patient_obj.id,
+                           f"Paciente creado: {input.name}", eid)
+    except Exception:
+        # El log de actividad no debe bloquear la creación si falla
+        logger.exception("[create_patient] log_activity falló (ignorado)")
     return patient_obj.model_dump()
 
 @api_router.get("/patients")
@@ -1107,8 +1265,14 @@ async def get_patients(
         if doctor_id:
             query = {**empresa_filter, "doctor_id": doctor_id}
     else:
-        # Doctor normal: solo ve sus propios pacientes
-        query = {**empresa_filter, "doctor_id": user['id']}
+        # Doctor normal: depende del modo de la empresa
+        # - shared  (clínicas) → ve todos los pacientes de la empresa
+        # - private (Arandu)   → sólo sus propios pacientes
+        base = await get_patient_filter(user)
+        if doctor_id:
+            query = {**base, "doctor_id": doctor_id}
+        else:
+            query = base
     patients = await db.patients.find(query, {"_id": 0}).to_list(1000)
     if privileged:
         dc = {}
@@ -1123,8 +1287,7 @@ async def get_patients(
 
 @api_router.get("/patients/search")
 async def search_patients(q: str, user: dict = Depends(get_current_user_full)):
-    empresa_filter = get_empresa_filter(user)
-    base = empresa_filter if is_privileged(user) else {**empresa_filter, "doctor_id": user['id']}
+    base = await get_patient_filter(user)
     query = {**base, "$or": [
         {"name": {"$regex": q, "$options": "i"}},
         {"cedula": {"$regex": q, "$options": "i"}}
@@ -1136,8 +1299,7 @@ async def search_patients(q: str, user: dict = Depends(get_current_user_full)):
 
 @api_router.get("/patients/advanced-search")
 async def advanced_search(q: str, user: dict = Depends(get_current_user_full)):
-    empresa_filter = get_empresa_filter(user)
-    base = empresa_filter if is_privileged(user) else {**empresa_filter, "doctor_id": user['id']}
+    base = await get_patient_filter(user)
     cons_q = {**base, "$or": [
         {"diagnosis": {"$regex": q, "$options": "i"}},
         {"treatment": {"$regex": q, "$options": "i"}},
@@ -1161,8 +1323,7 @@ async def advanced_search(q: str, user: dict = Depends(get_current_user_full)):
 
 @api_router.get("/patients/{patient_id}")
 async def get_patient(patient_id: str, user: dict = Depends(get_current_user_full)):
-    empresa_filter = get_empresa_filter(user)
-    base = empresa_filter if is_privileged(user) else {**empresa_filter, "doctor_id": user['id']}
+    base = await get_patient_filter(user)
     patient = await db.patients.find_one({**base, "id": patient_id}, {"_id": 0})
     if not patient:
         raise HTTPException(404, "Paciente no encontrado")
@@ -1171,8 +1332,7 @@ async def get_patient(patient_id: str, user: dict = Depends(get_current_user_ful
 
 @api_router.put("/patients/{patient_id}")
 async def update_patient(patient_id: str, input: PatientUpdate, user: dict = Depends(get_current_user_full)):
-    empresa_filter = get_empresa_filter(user)
-    base = empresa_filter if is_privileged(user) else {**empresa_filter, "doctor_id": user['id']}
+    base = await get_patient_filter(user)
     data = {k: v for k, v in input.model_dump().items() if v is not None}
     data['updated_at'] = datetime.now(timezone.utc).isoformat()
     result = await db.patients.update_one({**base, "id": patient_id}, {"$set": data})
@@ -1203,8 +1363,9 @@ async def delete_patient(patient_id: str, user: dict = Depends(get_current_user_
 
 @api_router.get("/patients/{patient_id}/medical-history")
 async def get_medical_history(patient_id: str, user: dict = Depends(get_current_user_full)):
-    empresa_filter = get_empresa_filter(user)
-    base = empresa_filter if is_privileged(user) else {**empresa_filter, "doctor_id": user['id']}
+    # Mismo criterio que para ver al paciente: si la empresa es shared todos los
+    # usuarios ven el historial; si es private (Arandu) sólo el doctor dueño.
+    base = await get_patient_filter(user)
     entries = await db.medical_history_entries.find(
         {**base, "patient_id": patient_id}, {"_id": 0}
     ).sort("created_at", -1).to_list(1000)
@@ -1305,8 +1466,8 @@ async def get_appointments(user: dict = Depends(get_current_user_full)):
 
 @api_router.get("/patients/{patient_id}/appointments")
 async def get_patient_appointments(patient_id: str, user: dict = Depends(get_current_user_full)):
-    empresa_filter = get_empresa_filter(user)
-    base = empresa_filter if is_privileged(user) else {**empresa_filter, "doctor_id": user['id']}
+    # Si el usuario puede ver al paciente debería ver sus citas asociadas.
+    base = await get_patient_filter(user)
     appts = await db.appointments.find({**base, "patient_id": patient_id}, {"_id": 0}).to_list(1000)
     for a in appts:
         fix_datetime(a, ['date', 'created_at'])
@@ -1376,8 +1537,8 @@ async def create_consultation(input: ConsultationCreate, user: dict = Depends(ge
 
 @api_router.get("/patients/{patient_id}/consultations")
 async def get_patient_consultations(patient_id: str, user: dict = Depends(get_current_user_full)):
-    empresa_filter = get_empresa_filter(user)
-    base = empresa_filter if is_privileged(user) else {**empresa_filter, "doctor_id": user['id']}
+    # Mismo criterio de visibilidad que el paciente.
+    base = await get_patient_filter(user)
     consultations = await db.consultations.find({**base, "patient_id": patient_id}, {"_id": 0}).to_list(1000)
     for c in consultations:
         fix_datetime(c, ['date', 'created_at'])
@@ -1412,8 +1573,7 @@ async def delete_consultation(cid: str, user: dict = Depends(get_current_user_fu
 async def upload_patient_file(patient_id: str, file: UploadFile = File(...),
                                user: dict = Depends(get_current_user_full)):
     eid = get_user_empresa_id(user)
-    empresa_filter = get_empresa_filter(user)
-    base = empresa_filter if is_privileged(user) else {**empresa_filter, "doctor_id": user['id']}
+    base = await get_patient_filter(user)
     patient = await db.patients.find_one({**base, "id": patient_id}, {"_id": 0})
     if not patient:
         raise HTTPException(404, "Paciente no encontrado")
@@ -1432,8 +1592,7 @@ async def upload_patient_file(patient_id: str, file: UploadFile = File(...),
 
 @api_router.get("/patients/{patient_id}/files")
 async def get_patient_files(patient_id: str, user: dict = Depends(get_current_user_full)):
-    empresa_filter = get_empresa_filter(user)
-    base = empresa_filter if is_privileged(user) else {**empresa_filter, "doctor_id": user['id']}
+    base = await get_patient_filter(user)
     files = await db.files.find({**base, "patient_id": patient_id}, {"_id": 0}).to_list(1000)
     for f in files:
         fix_datetime(f, ['created_at'])
@@ -1471,8 +1630,7 @@ async def create_prescription(input: PrescriptionCreate, user: dict = Depends(ge
 
 @api_router.get("/patients/{patient_id}/prescriptions")
 async def get_patient_prescriptions(patient_id: str, user: dict = Depends(get_current_user_full)):
-    empresa_filter = get_empresa_filter(user)
-    base = empresa_filter if is_privileged(user) else {**empresa_filter, "doctor_id": user['id']}
+    base = await get_patient_filter(user)
     prescriptions = await db.prescriptions.find({**base, "patient_id": patient_id}, {"_id": 0}).to_list(1000)
     for p in prescriptions:
         fix_datetime(p, ['date', 'created_at'])
@@ -1589,8 +1747,7 @@ def hex_to_rgb_color(hex_color: str):
 
 @api_router.get("/patients/{patient_id}/export-pdf")
 async def export_patient_pdf(patient_id: str, user: dict = Depends(get_current_user_full)):
-    empresa_filter = get_empresa_filter(user)
-    base = empresa_filter if is_privileged(user) else {**empresa_filter, "doctor_id": user['id']}
+    base = await get_patient_filter(user)
     patient = await db.patients.find_one({**base, "id": patient_id}, {"_id": 0})
     if not patient:
         raise HTTPException(404, "Paciente no encontrado")
@@ -1688,8 +1845,7 @@ async def export_patient_pdf(patient_id: str, user: dict = Depends(get_current_u
 
 @api_router.get("/prescriptions/{prescription_id}/pdf")
 async def export_prescription_pdf(prescription_id: str, user: dict = Depends(get_current_user_full)):
-    empresa_filter = get_empresa_filter(user)
-    base = empresa_filter if is_privileged(user) else {**empresa_filter, "doctor_id": user['id']}
+    base = await get_patient_filter(user)
     prescription = await db.prescriptions.find_one({**base, "id": prescription_id}, {"_id": 0})
     if not prescription:
         raise HTTPException(404, "Indicación no encontrada")
@@ -1806,8 +1962,7 @@ async def export_prescription_pdf(prescription_id: str, user: dict = Depends(get
 @api_router.get("/prescriptions/{prescription_id}/certificado-pdf")
 async def export_certificado_pdf(prescription_id: str, user: dict = Depends(get_current_user_full)):
     """Genera un Certificado Fisioterapéutico elegante con firma digital para Equilibrio."""
-    empresa_filter = get_empresa_filter(user)
-    base = empresa_filter if is_privileged(user) else {**empresa_filter, "doctor_id": user['id']}
+    base = await get_patient_filter(user)
     prescription = await db.prescriptions.find_one({**base, "id": prescription_id}, {"_id": 0})
     if not prescription:
         raise HTTPException(404, "Indicación no encontrada")

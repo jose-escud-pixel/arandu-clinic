@@ -168,7 +168,12 @@ const EmpresasPanel = () => {
 };
 
 /* ─── Tabla de usuarios con asignación de empresa ────── */
-const UsersTable = ({ users, empresas, onApprove, onReject, onChangeRole, onChangePassword, onDelete, onAssignEmpresa, onToggleStatus, isSuperAdmin }) => {
+// Permisos verticales: super_admin > admin > doctor.
+// Nadie puede degradar/eliminar/deshabilitar a sí mismo ni a un par o superior.
+const ROLE_RANK = { doctor: 1, admin: 2, super_admin: 3 };
+const rankOf = (r) => ROLE_RANK[r] || 1;
+
+const UsersTable = ({ users, empresas, currentUser, onApprove, onReject, onChangeRole, onChangePassword, onDelete, onAssignEmpresa, onToggleStatus, isSuperAdmin }) => {
   const [pwModal, setPwModal] = useState(null);
   const [newPw, setNewPw] = useState('');
   const [showPw, setShowPw] = useState(false);
@@ -195,7 +200,18 @@ const UsersTable = ({ users, empresas, onApprove, onReject, onChangeRole, onChan
     finally { setTogglingId(null); }
   };
 
-  const ROLES = isSuperAdmin ? ['doctor','admin','super_admin'] : ['doctor','admin'];
+  // ¿El currentUser puede actuar (degradar / deshabilitar / eliminar) sobre u?
+  const canManage = (u) => {
+    if (!currentUser) return false;
+    if (u.id === currentUser.id) return false; // nunca sobre sí mismo
+    return rankOf(currentUser.role) > rankOf(u.role);
+  };
+
+  // Roles asignables: estrictamente inferiores al rol del actor.
+  const ALL_ROLES = ['doctor','admin','super_admin'];
+  const assignableRoles = (currentUser?.role === 'super_admin')
+      ? ['doctor','admin']
+      : (currentUser?.role === 'admin' ? ['doctor'] : []);
 
   return (
     <>
@@ -244,10 +260,27 @@ const UsersTable = ({ users, empresas, onApprove, onReject, onChangeRole, onChan
                   )}
                 </td>
                 <td className="px-4 py-3">
-                  <select value={u.role} onChange={e => onChangeRole(u.id, e.target.value)}
-                          className="text-xs border border-border rounded-lg px-2 py-1.5 bg-background">
-                    {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
-                  </select>
+                  {canManage(u) ? (
+                    <select
+                      value={u.role}
+                      onChange={e => onChangeRole(u.id, e.target.value)}
+                      className="text-xs border border-border rounded-lg px-2 py-1.5 bg-background"
+                    >
+                      {/* Sólo roles estrictamente inferiores al actor */}
+                      {[u.role, ...assignableRoles.filter(r => r !== u.role)]
+                        .filter(r => ALL_ROLES.includes(r))
+                        .map(r => <option key={r} value={r}>{r}</option>)}
+                    </select>
+                  ) : (
+                    <span
+                      className="inline-block text-xs rounded-lg px-2 py-1 bg-muted text-muted-foreground border border-border"
+                      title={u.id === currentUser?.id
+                        ? 'No podés cambiar tu propio rol'
+                        : 'No podés cambiar el rol de un usuario con rango igual o superior al tuyo'}
+                    >
+                      {u.role}
+                    </span>
+                  )}
                 </td>
                 <td className="px-4 py-3">
                   <span className={`inline-block text-xs rounded-full px-2 py-0.5 font-medium ${
@@ -272,8 +305,8 @@ const UsersTable = ({ users, empresas, onApprove, onReject, onChangeRole, onChan
                                 className="rounded-lg hover:bg-red-50 text-red-500 h-7 w-7 p-0" title="Rechazar"><X className="w-3.5 h-3.5"/></Button>
                       </>
                     )}
-                    {/* Habilitar / Deshabilitar */}
-                    {u.status !== 'pending' && (
+                    {/* Habilitar / Deshabilitar — sólo si el actor puede gestionar a este usuario */}
+                    {u.status !== 'pending' && canManage(u) && (
                       <Button variant="ghost" size="sm" disabled={togglingId===u.id}
                               onClick={()=>handleToggle(u.id)}
                               className={`rounded-lg h-7 w-7 p-0 ${u.status==='disabled' ? 'hover:bg-green-50 text-gray-400 hover:text-green-600' : 'hover:bg-orange-50 text-gray-400 hover:text-orange-500'}`}
@@ -285,10 +318,14 @@ const UsersTable = ({ users, empresas, onApprove, onReject, onChangeRole, onChan
                             : <UserX className="w-3.5 h-3.5"/>}
                       </Button>
                     )}
-                    <Button variant="ghost" size="sm" onClick={()=>{setPwModal(u);setNewPw('');setShowPw(false);}}
-                            className="rounded-lg hover:bg-blue-50 text-blue-500 h-7 w-7 p-0" title="Cambiar contraseña"><Key className="w-3.5 h-3.5"/></Button>
-                    <Button variant="ghost" size="sm" onClick={()=>onDelete(u.id)}
-                            className="rounded-lg hover:bg-red-50 text-red-500 h-7 w-7 p-0" title="Eliminar"><Trash2 className="w-3.5 h-3.5"/></Button>
+                    {canManage(u) && (
+                      <Button variant="ghost" size="sm" onClick={()=>{setPwModal(u);setNewPw('');setShowPw(false);}}
+                              className="rounded-lg hover:bg-blue-50 text-blue-500 h-7 w-7 p-0" title="Cambiar contraseña"><Key className="w-3.5 h-3.5"/></Button>
+                    )}
+                    {canManage(u) && (
+                      <Button variant="ghost" size="sm" onClick={()=>onDelete(u.id)}
+                              className="rounded-lg hover:bg-red-50 text-red-500 h-7 w-7 p-0" title="Eliminar"><Trash2 className="w-3.5 h-3.5"/></Button>
+                    )}
                   </div>
                 </td>
               </tr>
@@ -598,6 +635,7 @@ const AdminPage = ({ doctor }) => {
             </div>
             <UsersTable
               users={allUsers} empresas={empresas}
+              currentUser={doctor}
               onApprove={handleApprove} onReject={handleReject}
               onChangeRole={handleChangeRole} onChangePassword={handleChangePw}
               onDelete={handleDelete} onAssignEmpresa={handleAssignEmpresa}
@@ -620,6 +658,7 @@ const AdminPage = ({ doctor }) => {
             {loadingUsers ? <div className="text-center py-8 text-muted-foreground">Cargando...</div> : (
               <UsersTable
                 users={users} empresas={empresas}
+                currentUser={doctor}
                 onApprove={handleApprove} onReject={handleReject}
                 onChangeRole={handleChangeRole} onChangePassword={handleChangePw}
                 onDelete={handleDelete} onAssignEmpresa={handleAssignEmpresa}
@@ -649,6 +688,7 @@ const AdminPage = ({ doctor }) => {
             ) : (
               <UsersTable
                 users={pendingUsers} empresas={empresas}
+                currentUser={doctor}
                 onApprove={handleApprove} onReject={handleReject}
                 onChangeRole={handleChangeRole} onChangePassword={handleChangePw}
                 onDelete={handleDelete} onAssignEmpresa={handleAssignEmpresa}
