@@ -7,7 +7,7 @@ import { Label } from '../components/ui/label';
 import {
   Users, Shield, Building2, Plus, Edit2, Trash2, Check, X,
   Eye, EyeOff, Key, UserCheck, Activity, Palette,
-  ArrowRightLeft, UserX, UserCheck2, Power
+  ArrowRightLeft, UserX, UserCheck2, Power, Settings2
 } from 'lucide-react';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
@@ -168,18 +168,124 @@ const EmpresasPanel = () => {
 };
 
 /* ─── Tabla de usuarios con asignación de empresa ────── */
+/* ─── Modal: Permisos granulares de un doctor ─────────── */
+const PERMISOS_LABELS = {
+  ver: 'Ver', crear: 'Crear', editar: 'Editar', eliminar: 'Eliminar',
+  exportar_pdf: 'Exportar PDF', subir: 'Subir',
+};
+const MODULO_LABELS = {
+  pacientes: 'Pacientes', citas: 'Citas', historia_clinica: 'Historia Clínica',
+  consultas: 'Consultas', recetas: 'Recetas/Indicaciones',
+  archivos: 'Archivos', estadisticas: 'Estadísticas',
+};
+
+const PermisosModal = ({ user, onClose, onSaved }) => {
+  const [permisos, setPermisos] = useState(user.permissions || {});
+  const [catalogo, setCatalogo] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    api.admin.getPermisosDisponibles()
+      .then(data => setCatalogo(data))
+      .catch(() => setError('No se pudo cargar el catálogo de permisos'));
+  }, []);
+
+  const toggle = (key) => {
+    setPermisos(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const toggleModulo = (modulo, acciones) => {
+    const allOn = acciones.every(a => permisos[`${modulo}.${a}`]);
+    const next = {};
+    acciones.forEach(a => { next[`${modulo}.${a}`] = !allOn; });
+    setPermisos(prev => ({ ...prev, ...next }));
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      await api.admin.updatePermissions(user.id, permisos);
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e?.response?.data?.detail || 'Error al guardar permisos');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal title={`Permisos — ${user.name}`} onClose={onClose}>
+      <div className="space-y-4">
+        {error && <p className="text-sm text-red-600 bg-red-50 rounded-xl px-3 py-2">{error}</p>}
+        {!catalogo ? (
+          <p className="text-sm text-muted-foreground text-center py-4">Cargando permisos…</p>
+        ) : (
+          <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1">
+            {Object.entries(catalogo).map(([modulo, acciones]) => {
+              const allOn = acciones.every(a => permisos[`${modulo}.${a}`]);
+              return (
+                <div key={modulo} className="border border-border rounded-xl overflow-hidden">
+                  <button
+                    onClick={() => toggleModulo(modulo, acciones)}
+                    className="w-full flex items-center justify-between px-4 py-2.5 bg-muted hover:bg-muted/80 transition-colors text-left"
+                  >
+                    <span className="font-medium text-sm text-foreground">
+                      {MODULO_LABELS[modulo] || modulo}
+                    </span>
+                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${allOn ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                      {allOn ? 'Todo habilitado' : 'Parcial / deshabilitado'}
+                    </span>
+                  </button>
+                  <div className="px-4 py-3 grid grid-cols-2 gap-2">
+                    {acciones.map(accion => {
+                      const key = `${modulo}.${accion}`;
+                      return (
+                        <label key={key} className="flex items-center gap-2 cursor-pointer text-sm select-none">
+                          <input
+                            type="checkbox"
+                            checked={!!permisos[key]}
+                            onChange={() => toggle(key)}
+                            className="w-4 h-4 accent-primary rounded"
+                          />
+                          <span className={permisos[key] ? 'text-foreground' : 'text-muted-foreground'}>
+                            {PERMISOS_LABELS[accion] || accion}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <div className="flex gap-2 pt-2">
+          <Button variant="outline" onClick={onClose} className="flex-1 rounded-xl">Cancelar</Button>
+          <Button onClick={handleSave} disabled={saving || !catalogo} className="flex-1 rounded-xl">
+            {saving ? 'Guardando…' : 'Guardar permisos'}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
 // Permisos verticales: super_admin > admin > doctor.
 // Nadie puede degradar/eliminar/deshabilitar a sí mismo ni a un par o superior.
 const ROLE_RANK = { doctor: 1, admin: 2, super_admin: 3 };
 const rankOf = (r) => ROLE_RANK[r] || 1;
 
-const UsersTable = ({ users, empresas, currentUser, onApprove, onReject, onChangeRole, onChangePassword, onDelete, onAssignEmpresa, onToggleStatus, isSuperAdmin }) => {
+const UsersTable = ({ users, empresas, currentUser, onApprove, onReject, onChangeRole, onChangePassword, onDelete, onAssignEmpresa, onToggleStatus, isSuperAdmin, onPermisosUpdated }) => {
   const [pwModal, setPwModal] = useState(null);
   const [newPw, setNewPw] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [savingPw, setSavingPw] = useState(false);
   const [assigningId, setAssigningId] = useState(null);
   const [togglingId, setTogglingId] = useState(null);
+  const [permisosModal, setPermisosModal] = useState(null);
 
   const handleChangePw = async () => {
     if (!newPw || !pwModal) return;
@@ -322,6 +428,10 @@ const UsersTable = ({ users, empresas, currentUser, onApprove, onReject, onChang
                       <Button variant="ghost" size="sm" onClick={()=>{setPwModal(u);setNewPw('');setShowPw(false);}}
                               className="rounded-lg hover:bg-blue-50 text-blue-500 h-7 w-7 p-0" title="Cambiar contraseña"><Key className="w-3.5 h-3.5"/></Button>
                     )}
+                    {canManage(u) && u.role === 'doctor' && (
+                      <Button variant="ghost" size="sm" onClick={() => setPermisosModal(u)}
+                              className="rounded-lg hover:bg-purple-50 text-purple-500 h-7 w-7 p-0" title="Editar permisos"><Settings2 className="w-3.5 h-3.5"/></Button>
+                    )}
                     {canManage(u) && (
                       <Button variant="ghost" size="sm" onClick={()=>onDelete(u.id)}
                               className="rounded-lg hover:bg-red-50 text-red-500 h-7 w-7 p-0" title="Eliminar"><Trash2 className="w-3.5 h-3.5"/></Button>
@@ -359,6 +469,13 @@ const UsersTable = ({ users, empresas, currentUser, onApprove, onReject, onChang
             </div>
           </div>
         </Modal>
+      )}
+      {permisosModal && (
+        <PermisosModal
+          user={permisosModal}
+          onClose={() => setPermisosModal(null)}
+          onSaved={() => { setPermisosModal(null); if (onPermisosUpdated) onPermisosUpdated(); }}
+        />
       )}
     </>
   );
@@ -641,6 +758,7 @@ const AdminPage = ({ doctor }) => {
               onDelete={handleDelete} onAssignEmpresa={handleAssignEmpresa}
               onToggleStatus={handleToggleStatus}
               isSuperAdmin={true}
+              onPermisosUpdated={() => { loadAllUsers(); loadUsers(); }}
             />
           </div>
         )}
@@ -664,6 +782,7 @@ const AdminPage = ({ doctor }) => {
                 onDelete={handleDelete} onAssignEmpresa={handleAssignEmpresa}
                 onToggleStatus={handleToggleStatus}
                 isSuperAdmin={isSuperAdmin}
+                onPermisosUpdated={loadUsers}
               />
             )}
           </div>
@@ -694,6 +813,7 @@ const AdminPage = ({ doctor }) => {
                 onDelete={handleDelete} onAssignEmpresa={handleAssignEmpresa}
                 onToggleStatus={handleToggleStatus}
                 isSuperAdmin={isSuperAdmin}
+                onPermisosUpdated={loadUsers}
               />
             )}
           </div>

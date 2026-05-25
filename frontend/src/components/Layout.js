@@ -44,11 +44,18 @@ const Layout = ({ doctor, onLogout, empresasList = [], onSwitchEmpresa }) => {
     }
   };
 
+  // Helper: check a granular permission for the current user.
+  // Admins/super_admins always pass; doctors must have the flag explicitly set.
+  const hasPerm = (perm) => {
+    if (isAdmin) return true;
+    return doctor?.permissions?.[perm] === true;
+  };
+
   const navItems = [
     { to: '/', icon: Home, label: 'Panel Principal', testId: 'nav-dashboard' },
-    { to: '/patients', icon: Users, label: 'Pacientes', testId: 'nav-patients' },
-    { to: '/appointments', icon: Calendar, label: 'Citas', testId: 'nav-appointments' },
-    { to: '/statistics', icon: BarChart3, label: 'Estadísticas', testId: 'nav-statistics' },
+    ...(hasPerm('pacientes.ver') ? [{ to: '/patients', icon: Users, label: 'Pacientes', testId: 'nav-patients' }] : []),
+    ...(hasPerm('citas.ver') ? [{ to: '/appointments', icon: Calendar, label: 'Citas', testId: 'nav-appointments' }] : []),
+    ...(hasPerm('estadisticas.ver') ? [{ to: '/statistics', icon: BarChart3, label: 'Estadísticas', testId: 'nav-statistics' }] : []),
     ...(isAdmin ? [
       { to: '/admin', icon: Shield, label: 'Administrador', testId: 'nav-admin' },
       { to: '/activity-log', icon: Activity, label: 'Log Actividad', testId: 'nav-activity-log' },

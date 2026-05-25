@@ -175,6 +175,10 @@ export const api = {
         { headers: getAuthHeader() });
       return r.data;
     },
+    getPermisosDisponibles: async () => {
+      const r = await axios.get(`${API}/permisos-disponibles`, { headers: getAuthHeader() });
+      return r.data;
+    },
   },
 
   // ── PACIENTES ────────────────────────────────────────────

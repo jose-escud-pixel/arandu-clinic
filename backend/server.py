@@ -423,9 +423,87 @@ async def require_super_admin(user: dict = Depends(get_current_user_full)):
     return user
 
 def check_permission(user: dict, perm: str) -> bool:
+    """Verifica si el usuario tiene el permiso 'modulo.accion'.
+    super_admin y admin siempre tienen acceso total."""
     if user.get('role') in ['super_admin', 'admin']:
         return True
     return user.get('permissions', {}).get(perm, False)
+
+def require_permission(user: dict, perm: str):
+    """Lanza 403 si el doctor no tiene el permiso requerido."""
+    if not check_permission(user, perm):
+        module, _, action = perm.partition('.')
+        raise HTTPException(403, f"Sin permiso: {PERMISOS_LABELS.get(perm, perm)}")
+
+# ── Catálogo de permisos granulares ───────────────────────────
+# Formato: { "modulo": ["accion1", "accion2", ...] }
+# admin/super_admin tienen todos implícitamente; estos aplican solo a "doctor".
+PERMISOS_DISPONIBLES = {
+    "pacientes":        ["ver", "crear", "editar", "eliminar", "exportar_pdf"],
+    "citas":            ["ver", "crear", "editar", "eliminar"],
+    "historia_clinica": ["ver", "crear", "editar", "eliminar"],
+    "consultas":        ["ver", "crear", "editar", "eliminar"],
+    "recetas":          ["ver", "crear", "editar", "eliminar"],
+    "archivos":         ["ver", "subir", "eliminar"],
+    "estadisticas":     ["ver"],
+}
+
+PERMISOS_LABELS = {
+    "pacientes.ver":           "Ver pacientes",
+    "pacientes.crear":         "Crear pacientes",
+    "pacientes.editar":        "Editar pacientes",
+    "pacientes.eliminar":      "Eliminar pacientes",
+    "pacientes.exportar_pdf":  "Exportar PDF paciente",
+    "citas.ver":               "Ver citas",
+    "citas.crear":             "Crear citas",
+    "citas.editar":            "Editar citas",
+    "citas.eliminar":          "Eliminar citas",
+    "historia_clinica.ver":    "Ver historia clínica",
+    "historia_clinica.crear":  "Agregar antecedentes",
+    "historia_clinica.editar": "Editar antecedentes",
+    "historia_clinica.eliminar": "Eliminar antecedentes",
+    "consultas.ver":           "Ver consultas",
+    "consultas.crear":         "Crear consultas",
+    "consultas.editar":        "Editar consultas",
+    "consultas.eliminar":      "Eliminar consultas",
+    "recetas.ver":             "Ver recetas/indicaciones",
+    "recetas.crear":           "Crear recetas",
+    "recetas.editar":          "Editar recetas",
+    "recetas.eliminar":        "Eliminar recetas",
+    "archivos.ver":            "Ver archivos adjuntos",
+    "archivos.subir":          "Subir archivos",
+    "archivos.eliminar":       "Eliminar archivos",
+    "estadisticas.ver":        "Ver estadísticas",
+}
+
+# Permisos asignados por defecto a un doctor recién creado
+PERMISOS_DEFAULT_DOCTOR = {
+    "pacientes.ver": True,
+    "pacientes.crear": True,
+    "pacientes.editar": True,
+    "pacientes.eliminar": False,
+    "pacientes.exportar_pdf": True,
+    "citas.ver": True,
+    "citas.crear": True,
+    "citas.editar": True,
+    "citas.eliminar": False,
+    "historia_clinica.ver": True,
+    "historia_clinica.crear": True,
+    "historia_clinica.editar": True,
+    "historia_clinica.eliminar": False,
+    "consultas.ver": True,
+    "consultas.crear": True,
+    "consultas.editar": True,
+    "consultas.eliminar": False,
+    "recetas.ver": True,
+    "recetas.crear": True,
+    "recetas.editar": True,
+    "recetas.eliminar": False,
+    "archivos.ver": True,
+    "archivos.subir": True,
+    "archivos.eliminar": False,
+    "estadisticas.ver": True,
+}
 
 # ── Permisos verticales ────────────────────────────────────────
 # Reglas de la jerarquía:
@@ -968,7 +1046,7 @@ async def sa_create_user(input: CreateUserAdmin, admin: dict = Depends(require_s
         role=input.role,
         empresa_id=input.empresa_id,
         empresas=[input.empresa_id],
-        permissions=input.permissions or {},
+        permissions=input.permissions or (PERMISOS_DEFAULT_DOCTOR if input.role == "doctor" else {}),
         status="active"
     )
     doc = doctor.model_dump()
@@ -1016,6 +1094,11 @@ async def sa_set_permissions(user_id: str, input: UpdatePermissionsInput, admin:
 # ═══════════════════════════════════════════════════════════════
 # ADMIN — Gestión de usuarios (solo su empresa)
 # ═══════════════════════════════════════════════════════════════
+
+@api_router.get("/permisos-disponibles")
+async def get_permisos_disponibles(user: dict = Depends(get_current_user_full)):
+    """Devuelve el catálogo de módulos y acciones disponibles para configurar permisos."""
+    return PERMISOS_DISPONIBLES
 
 @api_router.get("/admin/users")
 async def get_all_users(admin: dict = Depends(require_admin_or_super)):
@@ -1150,7 +1233,7 @@ async def admin_create_user(input: dict, admin: dict = Depends(require_admin_or_
         "role": role,
         "empresa_id": empresa_id,
         "empresas": [empresa_id] if empresa_id else [],
-        "permissions": {},
+        "permissions": PERMISOS_DEFAULT_DOCTOR if role == "doctor" else {},
         "status": "active",   # creado directo → activo
         "specialty": input.get("specialty", ""),
         "license_number": input.get("license_number", ""),
@@ -1215,9 +1298,7 @@ async def get_activity_logs(
 
 @api_router.post("/patients")
 async def create_patient(input: PatientCreate, user: dict = Depends(get_current_user_full)):
-    if not check_permission(user, 'crear_paciente'):
-        if user.get('role') not in ['admin', 'super_admin']:
-            pass  # doctors can always create patients
+    require_permission(user, "pacientes.crear")
     eid = get_user_empresa_id(user)
     if not eid:
         raise HTTPException(400, "Sin empresa activa")
@@ -1257,6 +1338,7 @@ async def get_patients(
     user: dict = Depends(get_current_user_full),
     doctor_id: Optional[str] = Query(default=None)
 ):
+    require_permission(user, "pacientes.ver")
     empresa_filter = get_empresa_filter(user)
     privileged = is_privileged(user)
     if privileged:
@@ -1287,6 +1369,7 @@ async def get_patients(
 
 @api_router.get("/patients/search")
 async def search_patients(q: str, user: dict = Depends(get_current_user_full)):
+    require_permission(user, "pacientes.ver")
     base = await get_patient_filter(user)
     query = {**base, "$or": [
         {"name": {"$regex": q, "$options": "i"}},
@@ -1299,6 +1382,7 @@ async def search_patients(q: str, user: dict = Depends(get_current_user_full)):
 
 @api_router.get("/patients/advanced-search")
 async def advanced_search(q: str, user: dict = Depends(get_current_user_full)):
+    require_permission(user, "pacientes.ver")
     base = await get_patient_filter(user)
     cons_q = {**base, "$or": [
         {"diagnosis": {"$regex": q, "$options": "i"}},
@@ -1323,6 +1407,7 @@ async def advanced_search(q: str, user: dict = Depends(get_current_user_full)):
 
 @api_router.get("/patients/{patient_id}")
 async def get_patient(patient_id: str, user: dict = Depends(get_current_user_full)):
+    require_permission(user, "pacientes.ver")
     base = await get_patient_filter(user)
     patient = await db.patients.find_one({**base, "id": patient_id}, {"_id": 0})
     if not patient:
@@ -1332,6 +1417,7 @@ async def get_patient(patient_id: str, user: dict = Depends(get_current_user_ful
 
 @api_router.put("/patients/{patient_id}")
 async def update_patient(patient_id: str, input: PatientUpdate, user: dict = Depends(get_current_user_full)):
+    require_permission(user, "pacientes.editar")
     base = await get_patient_filter(user)
     data = {k: v for k, v in input.model_dump().items() if v is not None}
     data['updated_at'] = datetime.now(timezone.utc).isoformat()
@@ -1346,6 +1432,7 @@ async def update_patient(patient_id: str, input: PatientUpdate, user: dict = Dep
 
 @api_router.delete("/patients/{patient_id}")
 async def delete_patient(patient_id: str, user: dict = Depends(get_current_user_full)):
+    require_permission(user, "pacientes.eliminar")
     empresa_filter = get_empresa_filter(user)
     base = empresa_filter if is_privileged(user) else {**empresa_filter, "doctor_id": user['id']}
     patient = await db.patients.find_one({**base, "id": patient_id}, {"_id": 0, "name": 1})
@@ -1363,6 +1450,7 @@ async def delete_patient(patient_id: str, user: dict = Depends(get_current_user_
 
 @api_router.get("/patients/{patient_id}/medical-history")
 async def get_medical_history(patient_id: str, user: dict = Depends(get_current_user_full)):
+    require_permission(user, "historia_clinica.ver")
     # Mismo criterio que para ver al paciente: si la empresa es shared todos los
     # usuarios ven el historial; si es private (Arandu) sólo el doctor dueño.
     base = await get_patient_filter(user)
@@ -1391,6 +1479,7 @@ async def get_medical_history(patient_id: str, user: dict = Depends(get_current_
 @api_router.post("/patients/{patient_id}/medical-history")
 async def create_history_entry(patient_id: str, input: MedicalHistoryEntryCreate,
                                user: dict = Depends(get_current_user_full)):
+    require_permission(user, "historia_clinica.crear")
     eid = get_user_empresa_id(user)
     today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
     doc = {"id": str(uuid.uuid4()), "patient_id": patient_id, "doctor_id": user['id'],
@@ -1404,6 +1493,7 @@ async def create_history_entry(patient_id: str, input: MedicalHistoryEntryCreate
 @api_router.put("/medical-history-entries/{entry_id}")
 async def update_history_entry(entry_id: str, input: MedicalHistoryEntryUpdate,
                                user: dict = Depends(get_current_user_full)):
+    require_permission(user, "historia_clinica.editar")
     base = {} if is_privileged(user) else {"doctor_id": user['id']}
     data = {k: v for k, v in input.model_dump().items() if v is not None}
     if not data:
@@ -1415,6 +1505,7 @@ async def update_history_entry(entry_id: str, input: MedicalHistoryEntryUpdate,
 
 @api_router.delete("/medical-history-entries/{entry_id}")
 async def delete_history_entry(entry_id: str, user: dict = Depends(get_current_user_full)):
+    require_permission(user, "historia_clinica.eliminar")
     base = {} if is_privileged(user) else {"doctor_id": user['id']}
     result = await db.medical_history_entries.delete_one({**base, "id": entry_id})
     if result.deleted_count == 0:
@@ -1427,6 +1518,7 @@ async def delete_history_entry(entry_id: str, user: dict = Depends(get_current_u
 
 @api_router.post("/appointments")
 async def create_appointment(input: AppointmentCreate, user: dict = Depends(get_current_user_full)):
+    require_permission(user, "citas.crear")
     eid = get_user_empresa_id(user)
     appt = Appointment(
         empresa_id=eid,
@@ -1450,6 +1542,7 @@ async def create_appointment(input: AppointmentCreate, user: dict = Depends(get_
 
 @api_router.get("/appointments")
 async def get_appointments(user: dict = Depends(get_current_user_full)):
+    require_permission(user, "citas.ver")
     empresa_filter = get_empresa_filter(user)
     query = empresa_filter if is_privileged(user) else {**empresa_filter, "doctor_id": user['id']}
     appointments = await db.appointments.find(query, {"_id": 0}).to_list(1000)
@@ -1475,6 +1568,7 @@ async def get_patient_appointments(patient_id: str, user: dict = Depends(get_cur
 
 @api_router.put("/appointments/{aid}")
 async def update_appointment(aid: str, input: AppointmentUpdate, user: dict = Depends(get_current_user_full)):
+    require_permission(user, "citas.editar")
     base = {} if is_privileged(user) else {"doctor_id": user['id']}
     data = {k: v for k, v in input.model_dump().items() if v is not None}
     if 'date' in data:
@@ -1488,6 +1582,7 @@ async def update_appointment(aid: str, input: AppointmentUpdate, user: dict = De
 
 @api_router.delete("/appointments/{aid}")
 async def delete_appointment(aid: str, user: dict = Depends(get_current_user_full)):
+    require_permission(user, "citas.eliminar")
     base = {} if is_privileged(user) else {"doctor_id": user['id']}
     result = await db.appointments.delete_one({**base, "id": aid})
     if result.deleted_count == 0:
@@ -1519,6 +1614,7 @@ async def upcoming_reminders(user: dict = Depends(get_current_user_full)):
 
 @api_router.post("/consultations")
 async def create_consultation(input: ConsultationCreate, user: dict = Depends(get_current_user_full)):
+    require_permission(user, "consultas.crear")
     eid = get_user_empresa_id(user)
     cons = Consultation(empresa_id=eid, patient_id=input.patient_id, doctor_id=user['id'],
                         date=datetime.now(timezone.utc), diagnosis=input.diagnosis,
@@ -1537,6 +1633,7 @@ async def create_consultation(input: ConsultationCreate, user: dict = Depends(ge
 
 @api_router.get("/patients/{patient_id}/consultations")
 async def get_patient_consultations(patient_id: str, user: dict = Depends(get_current_user_full)):
+    require_permission(user, "consultas.ver")
     # Mismo criterio de visibilidad que el paciente.
     base = await get_patient_filter(user)
     consultations = await db.consultations.find({**base, "patient_id": patient_id}, {"_id": 0}).to_list(1000)
@@ -1546,6 +1643,7 @@ async def get_patient_consultations(patient_id: str, user: dict = Depends(get_cu
 
 @api_router.put("/consultations/{cid}")
 async def update_consultation(cid: str, input: ConsultationUpdate, user: dict = Depends(get_current_user_full)):
+    require_permission(user, "consultas.editar")
     base = {} if is_privileged(user) else {"doctor_id": user['id']}
     data = {k: v for k, v in input.model_dump().items() if v is not None}
     result = await db.consultations.update_one({**base, "id": cid}, {"$set": data})
@@ -1557,6 +1655,7 @@ async def update_consultation(cid: str, input: ConsultationUpdate, user: dict = 
 
 @api_router.delete("/consultations/{cid}")
 async def delete_consultation(cid: str, user: dict = Depends(get_current_user_full)):
+    require_permission(user, "consultas.eliminar")
     base = {} if is_privileged(user) else {"doctor_id": user['id']}
     result = await db.consultations.delete_one({**base, "id": cid})
     if result.deleted_count == 0:
@@ -1572,6 +1671,7 @@ async def delete_consultation(cid: str, user: dict = Depends(get_current_user_fu
 @api_router.post("/patients/{patient_id}/upload-file")
 async def upload_patient_file(patient_id: str, file: UploadFile = File(...),
                                user: dict = Depends(get_current_user_full)):
+    require_permission(user, "archivos.subir")
     eid = get_user_empresa_id(user)
     base = await get_patient_filter(user)
     patient = await db.patients.find_one({**base, "id": patient_id}, {"_id": 0})
@@ -1592,6 +1692,7 @@ async def upload_patient_file(patient_id: str, file: UploadFile = File(...),
 
 @api_router.get("/patients/{patient_id}/files")
 async def get_patient_files(patient_id: str, user: dict = Depends(get_current_user_full)):
+    require_permission(user, "archivos.ver")
     base = await get_patient_filter(user)
     files = await db.files.find({**base, "patient_id": patient_id}, {"_id": 0}).to_list(1000)
     for f in files:
@@ -1600,6 +1701,7 @@ async def get_patient_files(patient_id: str, user: dict = Depends(get_current_us
 
 @api_router.delete("/files/{file_id}")
 async def delete_file(file_id: str, user: dict = Depends(get_current_user_full)):
+    require_permission(user, "archivos.eliminar")
     base = {} if is_privileged(user) else {"doctor_id": user['id']}
     result = await db.files.delete_one({**base, "id": file_id})
     if result.deleted_count == 0:
@@ -1612,6 +1714,7 @@ async def delete_file(file_id: str, user: dict = Depends(get_current_user_full))
 
 @api_router.post("/prescriptions")
 async def create_prescription(input: PrescriptionCreate, user: dict = Depends(get_current_user_full)):
+    require_permission(user, "recetas.crear")
     eid = get_user_empresa_id(user)
     pres = Prescription(empresa_id=eid, patient_id=input.patient_id, doctor_id=user['id'],
                         date=datetime.now(timezone.utc), medications=input.medications,
@@ -1630,6 +1733,7 @@ async def create_prescription(input: PrescriptionCreate, user: dict = Depends(ge
 
 @api_router.get("/patients/{patient_id}/prescriptions")
 async def get_patient_prescriptions(patient_id: str, user: dict = Depends(get_current_user_full)):
+    require_permission(user, "recetas.ver")
     base = await get_patient_filter(user)
     prescriptions = await db.prescriptions.find({**base, "patient_id": patient_id}, {"_id": 0}).to_list(1000)
     for p in prescriptions:
@@ -1638,6 +1742,7 @@ async def get_patient_prescriptions(patient_id: str, user: dict = Depends(get_cu
 
 @api_router.put("/prescriptions/{pid}")
 async def update_prescription(pid: str, input: PrescriptionUpdate, user: dict = Depends(get_current_user_full)):
+    require_permission(user, "recetas.editar")
     base = {} if is_privileged(user) else {"doctor_id": user['id']}
     data = {k: v for k, v in input.model_dump().items() if v is not None}
     result = await db.prescriptions.update_one({**base, "id": pid}, {"$set": data})
@@ -1649,6 +1754,7 @@ async def update_prescription(pid: str, input: PrescriptionUpdate, user: dict = 
 
 @api_router.delete("/prescriptions/{pid}")
 async def delete_prescription(pid: str, user: dict = Depends(get_current_user_full)):
+    require_permission(user, "recetas.eliminar")
     base = {} if is_privileged(user) else {"doctor_id": user['id']}
     result = await db.prescriptions.delete_one({**base, "id": pid})
     if result.deleted_count == 0:
@@ -1677,6 +1783,7 @@ async def dashboard_stats(user: dict = Depends(get_current_user_full)):
 
 @api_router.get("/dashboard/advanced-stats")
 async def advanced_stats(user: dict = Depends(get_current_user_full)):
+    require_permission(user, "estadisticas.ver")
     from collections import Counter
     empresa_filter = get_empresa_filter(user)
     doc_filter = empresa_filter if is_privileged(user) else {**empresa_filter, "doctor_id": user['id']}
@@ -1747,6 +1854,7 @@ def hex_to_rgb_color(hex_color: str):
 
 @api_router.get("/patients/{patient_id}/export-pdf")
 async def export_patient_pdf(patient_id: str, user: dict = Depends(get_current_user_full)):
+    require_permission(user, "pacientes.exportar_pdf")
     base = await get_patient_filter(user)
     patient = await db.patients.find_one({**base, "id": patient_id}, {"_id": 0})
     if not patient:
@@ -1845,6 +1953,7 @@ async def export_patient_pdf(patient_id: str, user: dict = Depends(get_current_u
 
 @api_router.get("/prescriptions/{prescription_id}/pdf")
 async def export_prescription_pdf(prescription_id: str, user: dict = Depends(get_current_user_full)):
+    require_permission(user, "recetas.ver")
     base = await get_patient_filter(user)
     prescription = await db.prescriptions.find_one({**base, "id": prescription_id}, {"_id": 0})
     if not prescription:
