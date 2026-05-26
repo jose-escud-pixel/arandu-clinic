@@ -6,7 +6,7 @@ import { Label } from '../components/ui/label';
 import { Input } from '../components/ui/input';
 import { Textarea } from '../components/ui/textarea';
 import { Badge } from '../components/ui/badge';
-import { api } from '../lib/api';
+import { api, CLINIC_DOCTOR_KEY } from '../lib/api';
 import { toast } from 'sonner';
 import { Plus, Calendar as CalendarIcon, Edit, Trash2, Filter, Search } from 'lucide-react';
 import { format } from 'date-fns';
@@ -29,10 +29,10 @@ const AppointmentsPage = () => {
   const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
-    const stored = localStorage.getItem('doctor');
+    const stored = localStorage.getItem(CLINIC_DOCTOR_KEY);
     if (stored) {
       const doc = JSON.parse(stored);
-      setIsAdmin(doc.role === 'admin');
+      setIsAdmin(['admin', 'coordinador', 'super_admin'].includes(doc.role));
     }
     loadData();
   }, []);

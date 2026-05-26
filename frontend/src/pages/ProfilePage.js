@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
-import { api } from '../lib/api';
+import { api, CLINIC_DOCTOR_KEY } from '../lib/api';
 import { useEmpresa } from '../context/EmpresaContext';
 import { User, Key, Save, Camera, ImageIcon, PenLine } from 'lucide-react';
 
@@ -57,7 +57,7 @@ const ProfilePage = ({ doctor: doctorProp, onUpdate }) => {
       await api.auth.updateProfile(profileForm);
       const data = await api.auth.me();
       setDoctor(data);
-      localStorage.setItem('doctor', JSON.stringify(data));
+      localStorage.setItem(CLINIC_DOCTOR_KEY, JSON.stringify(data));
       if (onUpdate) onUpdate(data);
       setProfileMsg('✓ Perfil actualizado');
     } catch { setProfileMsg('Error al actualizar perfil'); }
@@ -92,7 +92,7 @@ const ProfilePage = ({ doctor: doctorProp, onUpdate }) => {
       const result = await api.auth.uploadPhoto(file);
       const updated = { ...doctor, photo_url: result.photo_url };
       setDoctor(updated);
-      localStorage.setItem('doctor', JSON.stringify(updated));
+      localStorage.setItem(CLINIC_DOCTOR_KEY, JSON.stringify(updated));
       if (onUpdate) onUpdate(updated);
     } catch { alert('Error al subir foto'); }
     finally { setUploadingPhoto(false); e.target.value = ''; }
@@ -106,7 +106,7 @@ const ProfilePage = ({ doctor: doctorProp, onUpdate }) => {
       const result = await api.auth.uploadLogo(file);
       const updated = { ...doctor, logo_url: result.logo_url };
       setDoctor(updated);
-      localStorage.setItem('doctor', JSON.stringify(updated));
+      localStorage.setItem(CLINIC_DOCTOR_KEY, JSON.stringify(updated));
       if (onUpdate) onUpdate(updated);
     } catch { alert('Error al subir logo'); }
     finally { setUploadingLogo(false); e.target.value = ''; }
@@ -120,7 +120,7 @@ const ProfilePage = ({ doctor: doctorProp, onUpdate }) => {
       const result = await api.auth.uploadFirma(file);
       const updated = { ...doctor, firma_url: result.firma_url };
       setDoctor(updated);
-      localStorage.setItem('doctor', JSON.stringify(updated));
+      localStorage.setItem(CLINIC_DOCTOR_KEY, JSON.stringify(updated));
       if (onUpdate) onUpdate(updated);
     } catch { alert('Error al subir firma'); }
     finally { setUploadingFirma(false); e.target.value = ''; }
@@ -138,7 +138,8 @@ const ProfilePage = ({ doctor: doctorProp, onUpdate }) => {
   const firmaSrc  = doctor?.firma_url  ? `${BACKEND_URL}${doctor.firma_url}`  : null;
 
   const roleLabel = doctor?.role === 'super_admin' ? 'Super Admin'
-                  : doctor?.role === 'admin'        ? 'Administrador'
+                  : doctor?.role === 'admin'        ? 'Admin del sitio'
+                  : doctor?.role === 'coordinador'  ? 'Coordinador clínico'
                   : profesionalLabel;
 
   return (

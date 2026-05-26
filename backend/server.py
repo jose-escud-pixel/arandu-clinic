@@ -39,6 +39,7 @@ app.mount("/api/uploads", StaticFiles(directory=str(uploads_dir)), name="uploads
 security = HTTPBearer()
 JWT_SECRET = os.environ.get('JWT_SECRET', 'clinic-multitenant-secret-change-in-prod')
 JWT_ALGORITHM = 'HS256'
+JWT_APP = 'arandu-clinic'
 
 logger = logging.getLogger("arandu")
 if not logger.handlers:
@@ -54,6 +55,12 @@ class Empresa(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     slug: str
     nombre: str
+    razon_social: Optional[str] = None
+    ruc: Optional[str] = None
+    direccion: Optional[str] = None
+    telefono: Optional[str] = None
+    email: Optional[str] = None
+    contacto: Optional[str] = None
     logo_url: Optional[str] = None
     primary_color: str = "#D97757"
     secondary_color: str = "#4B7F52"
@@ -74,6 +81,12 @@ class Empresa(BaseModel):
 class EmpresaCreate(BaseModel):
     slug: str
     nombre: str
+    razon_social: Optional[str] = None
+    ruc: Optional[str] = None
+    direccion: Optional[str] = None
+    telefono: Optional[str] = None
+    email: Optional[str] = None
+    contacto: Optional[str] = None
     primary_color: str = "#D97757"
     secondary_color: str = "#4B7F52"
     bg_color: str = "#FDFCF8"
@@ -87,6 +100,12 @@ class EmpresaCreate(BaseModel):
 
 class EmpresaUpdate(BaseModel):
     nombre: Optional[str] = None
+    razon_social: Optional[str] = None
+    ruc: Optional[str] = None
+    direccion: Optional[str] = None
+    telefono: Optional[str] = None
+    email: Optional[str] = None
+    contacto: Optional[str] = None
     primary_color: Optional[str] = None
     secondary_color: Optional[str] = None
     bg_color: Optional[str] = None
@@ -104,7 +123,7 @@ class Doctor(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     email: EmailStr
     name: str
-    role: str = "doctor"   # "super_admin" | "admin" | "doctor"
+    role: str = "doctor"   # "super_admin" | "admin" | "coordinador" | "doctor"
     empresa_id: Optional[str] = None   # None → super_admin, sin empresa fija
     empresas: List[str] = []           # IDs de empresas accesibles
     permissions: Dict[str, bool] = Field(default_factory=dict)
@@ -142,8 +161,21 @@ class ChangePassword(BaseModel):
 class AdminChangePassword(BaseModel):
     new_password: str
 
+class AdminUserUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    password: Optional[str] = None
+    role: Optional[str] = None
+    empresa_ids: Optional[List[str]] = None
+    permissions: Optional[Dict[str, bool]] = None
+    specialty: Optional[str] = None
+    license_number: Optional[str] = None
+
 class SwitchEmpresaInput(BaseModel):
     empresa_id: str
+
+class AssignEmpresasInput(BaseModel):
+    empresa_ids: List[str]
 
 class CreateUserAdmin(BaseModel):
     email: EmailStr
@@ -365,6 +397,7 @@ def verify_password(pw: str, hashed: str) -> bool:
 
 def create_token(doctor_id: str, empresa_id: Optional[str] = None, role: str = "doctor") -> str:
     payload = {
+        'app': JWT_APP,
         'doctor_id': doctor_id,
         'empresa_id': empresa_id,
         'role': role,
@@ -373,7 +406,7 @@ def create_token(doctor_id: str, empresa_id: Optional[str] = None, role: str = "
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 def is_privileged(user: dict) -> bool:
-    return user.get('role') in ['admin', 'super_admin']
+    return user.get('role') in ['admin', 'coordinador', 'super_admin']
 
 def get_empresa_filter(user: dict) -> dict:
     role = user.get('role', 'doctor')
@@ -388,18 +421,38 @@ def get_empresa_filter(user: dict) -> dict:
 def get_user_empresa_id(user: dict) -> Optional[str]:
     return user.get('current_empresa_id') or user.get('empresa_id')
 
+def get_user_empresa_ids(user: dict) -> List[str]:
+    ids = [eid for eid in (user.get('empresas') or []) if eid]
+    primary = user.get('empresa_id')
+    current = user.get('current_empresa_id')
+    for eid in [primary, current]:
+        if eid and eid not in ids:
+            ids.append(eid)
+    return ids
+
+def user_can_access_empresa(user: dict, empresa_id: str) -> bool:
+    return user.get('role') == 'super_admin' or empresa_id in get_user_empresa_ids(user)
+
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
     try:
         payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        if payload.get('app') != JWT_APP:
+            raise HTTPException(401, "Token inválido para Arandu Clinic")
         return payload['doctor_id']
+    except HTTPException:
+        raise
     except:
         raise HTTPException(401, "Token inválido")
 
 async def get_current_user_full(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
     try:
         payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        if payload.get('app') != JWT_APP:
+            raise HTTPException(401, "Token inválido para Arandu Clinic")
         doctor_id = payload['doctor_id']
         empresa_id = payload.get('empresa_id')
+    except HTTPException:
+        raise
     except:
         raise HTTPException(401, "Token inválido")
     user = await db.doctors.find_one({"id": doctor_id}, {"_id": 0, "password": 0})
@@ -437,7 +490,7 @@ def require_permission(user: dict, perm: str):
 
 # ── Catálogo de permisos granulares ───────────────────────────
 # Formato: { "modulo": ["accion1", "accion2", ...] }
-# admin/super_admin tienen todos implícitamente; estos aplican solo a "doctor".
+# admin/super_admin tienen todos implícitamente; estos aplican a doctor/coordinador.
 PERMISOS_DISPONIBLES = {
     "pacientes":        ["ver", "crear", "editar", "eliminar", "exportar_pdf"],
     "citas":            ["ver", "crear", "editar", "eliminar"],
@@ -505,13 +558,20 @@ PERMISOS_DEFAULT_DOCTOR = {
     "estadisticas.ver": True,
 }
 
+PERMISOS_DEFAULT_COORDINADOR = {
+    f"{modulo}.{accion}": True
+    for modulo, acciones in PERMISOS_DISPONIBLES.items()
+    for accion in acciones
+}
+PERMISOS_DEFAULT_COORDINADOR["estadisticas.ver"] = True
+
 # ── Permisos verticales ────────────────────────────────────────
 # Reglas de la jerarquía:
-#   super_admin > admin > doctor
+#   super_admin > admin > coordinador > doctor
 # Nadie puede degradar a alguien de su mismo rango o superior, ni degradarse
 # a sí mismo. Sólo se puede operar sobre usuarios de rango estrictamente
 # inferior (o sobre sí mismo en acciones que no impliquen degradación).
-ROLE_RANK = {"doctor": 1, "admin": 2, "super_admin": 3}
+ROLE_RANK = {"doctor": 1, "coordinador": 2, "admin": 3, "super_admin": 4}
 
 def role_rank(role: Optional[str]) -> int:
     return ROLE_RANK.get(role or "doctor", 1)
@@ -537,7 +597,7 @@ def assert_can_change_role(actor: dict, target: dict, new_role: str):
     Reglas para cambiar el rol de target a new_role:
     - No te puedes cambiar tu propio rol (ni para subir ni para bajar).
     - Sólo puedes asignar roles de rango estrictamente inferior al tuyo.
-      (admin ⇒ sólo puede asignar 'doctor'; super_admin ⇒ 'admin' o 'doctor'.)
+      (admin ⇒ doctor/coordinador; super_admin ⇒ admin/coordinador/doctor).
     - Sólo puedes cambiar el rol de usuarios de rango estrictamente inferior
       al tuyo.
     """
@@ -815,7 +875,6 @@ async def login(input: DoctorLogin):
     role = doctor.get('role', 'doctor')
     empresa_id = doctor.get('empresa_id')
 
-    # 🔒 LÓGICA ESTRICTA: Solo super_admin ve múltiples empresas
     accessible_empresas = []
     
     if role == 'super_admin':
@@ -823,15 +882,20 @@ async def login(input: DoctorLogin):
         empresas_raw = await db.empresas.find({"active": True}, {"_id": 0}).to_list(100)
         accessible_empresas = empresas_raw
     else:
-        # Admins y doctores normales: SOLO ven su empresa asignada por empresa_id
-        # Se ignora el campo 'empresas' (lista) para forzar visualización única
-        if empresa_id:
-            emp = await db.empresas.find_one({"id": empresa_id}, {"_id": 0})
-            if emp:
-                accessible_empresas = [emp]
+        empresa_ids = [eid for eid in (doctor.get('empresas') or []) if eid]
+        if empresa_id and empresa_id not in empresa_ids:
+            empresa_ids.insert(0, empresa_id)
+        accessible_empresas = await db.empresas.find(
+            {"id": {"$in": empresa_ids}, "active": True},
+            {"_id": 0}
+        ).to_list(100)
+        if accessible_empresas and empresa_id not in [emp["id"] for emp in accessible_empresas]:
+            empresa_id = accessible_empresas[0]["id"]
 
     token = create_token(doctor['id'], empresa_id, role)
     doctor.pop('password', None)
+    doctor['empresa_id'] = empresa_id
+    doctor['current_empresa_id'] = empresa_id
     if isinstance(doctor.get('created_at'), str):
         try:
             doctor['created_at'] = datetime.fromisoformat(doctor['created_at'])
@@ -947,12 +1011,10 @@ async def change_password(input: ChangePassword, user: dict = Depends(get_curren
 async def list_empresas(user: dict = Depends(get_current_user_full)):
     if user.get('role') == 'super_admin':
         return await db.empresas.find({}, {"_id": 0}).to_list(100)
-    # Admin/doctor only see their empresa
-    eid = get_user_empresa_id(user)
-    if not eid:
+    ids = get_user_empresa_ids(user)
+    if not ids:
         return []
-    emp = await db.empresas.find_one({"id": eid}, {"_id": 0})
-    return [emp] if emp else []
+    return await db.empresas.find({"id": {"$in": ids}}, {"_id": 0}).to_list(100)
 
 @api_router.get("/empresas/public")
 async def list_empresas_public():
@@ -964,7 +1026,7 @@ async def list_empresas_public():
 
 @api_router.get("/empresas/{empresa_id}")
 async def get_empresa_by_id(empresa_id: str, user: dict = Depends(get_current_user_full)):
-    if user.get('role') != 'super_admin' and get_user_empresa_id(user) != empresa_id:
+    if not user_can_access_empresa(user, empresa_id):
         raise HTTPException(403, "Sin acceso")
     emp = await db.empresas.find_one({"id": empresa_id}, {"_id": 0})
     if not emp:
@@ -984,8 +1046,11 @@ async def create_empresa(input: EmpresaCreate, user: dict = Depends(require_supe
     return {k: v for k, v in doc.items() if k != '_id'}
 
 @api_router.put("/empresas/{empresa_id}")
-async def update_empresa(empresa_id: str, input: EmpresaUpdate, user: dict = Depends(require_super_admin)):
+async def update_empresa(empresa_id: str, input: EmpresaUpdate, user: dict = Depends(require_admin_or_super)):
+    if not user_can_access_empresa(user, empresa_id):
+        raise HTTPException(403, "Sin acceso")
     data = {k: v for k, v in input.model_dump().items() if v is not None}
+    data.pop("active", None)
     if not data:
         raise HTTPException(400, "Sin datos")
     result = await db.empresas.update_one({"id": empresa_id}, {"$set": data})
@@ -995,7 +1060,9 @@ async def update_empresa(empresa_id: str, input: EmpresaUpdate, user: dict = Dep
     return {"message": "Empresa actualizada"}
 
 @api_router.post("/empresas/{empresa_id}/upload-logo")
-async def upload_empresa_logo(empresa_id: str, file: UploadFile = File(...), user: dict = Depends(require_super_admin)):
+async def upload_empresa_logo(empresa_id: str, file: UploadFile = File(...), user: dict = Depends(require_admin_or_super)):
+    if not user_can_access_empresa(user, empresa_id):
+        raise HTTPException(403, "Sin acceso")
     if not file.content_type.startswith('image/'):
         raise HTTPException(400, "Solo imágenes")
     ext = file.filename.split('.')[-1] if '.' in file.filename else 'png'
@@ -1013,6 +1080,7 @@ async def delete_empresa(empresa_id: str, user: dict = Depends(require_super_adm
     result = await db.empresas.update_one({"id": empresa_id}, {"$set": {"active": False}})
     if result.matched_count == 0:
         raise HTTPException(404, "Empresa no encontrada")
+    await log_activity(user['id'], user['name'], "delete", "empresa", empresa_id, "Empresa desactivada")
     return {"message": "Empresa desactivada"}
 
 # ═══════════════════════════════════════════════════════════════
@@ -1030,6 +1098,9 @@ async def sa_get_all_users(user: dict = Depends(require_super_admin)):
             u['created_at'] = datetime.fromisoformat(u['created_at'])
         eid = u.get("empresa_id")
         u["empresa"] = empresa_map.get(eid) if eid else None
+        u["empresas_detalle"] = [
+            empresa_map[eid] for eid in (u.get("empresas") or []) if eid in empresa_map
+        ]
     return users
 
 @api_router.post("/superadmin/users")
@@ -1046,7 +1117,11 @@ async def sa_create_user(input: CreateUserAdmin, admin: dict = Depends(require_s
         role=input.role,
         empresa_id=input.empresa_id,
         empresas=[input.empresa_id],
-        permissions=input.permissions or (PERMISOS_DEFAULT_DOCTOR if input.role == "doctor" else {}),
+        permissions=input.permissions or (
+            PERMISOS_DEFAULT_COORDINADOR if input.role == "coordinador"
+            else PERMISOS_DEFAULT_DOCTOR if input.role == "doctor"
+            else {}
+        ),
         status="active"
     )
     doc = doctor.model_dump()
@@ -1085,6 +1160,30 @@ async def sa_assign_empresa(user_id: str, body: SwitchEmpresaInput, admin: dict 
                        body.empresa_id)
     return {"message": f"Empresa asignada. Registros migrados: {migrated}"}
 
+@api_router.put("/superadmin/users/{user_id}/empresas")
+async def sa_assign_empresas(user_id: str, body: AssignEmpresasInput, admin: dict = Depends(require_super_admin)):
+    empresa_ids = list(dict.fromkeys([eid for eid in body.empresa_ids if eid]))
+    target = await db.doctors.find_one({"id": user_id}, {"_id": 0, "id": 1, "role": 1, "name": 1})
+    if not target:
+        raise HTTPException(404, "Usuario no encontrado")
+    if target.get("role") == "super_admin":
+        raise HTTPException(400, "Un super admin no requiere empresas asignadas")
+    if not empresa_ids:
+        raise HTTPException(400, "Seleccioná al menos una empresa")
+
+    count = await db.empresas.count_documents({"id": {"$in": empresa_ids}})
+    if count != len(empresa_ids):
+        raise HTTPException(404, "Una o más empresas no existen")
+
+    primary_empresa = target.get("empresa_id") if target.get("empresa_id") in empresa_ids else empresa_ids[0]
+    await db.doctors.update_one({"id": user_id}, {
+        "$set": {"empresa_id": primary_empresa, "empresas": empresa_ids}
+    })
+    await log_activity(admin['id'], admin['name'], "update", "user", user_id,
+                       f"Empresas asignadas a {target['name']}: {len(empresa_ids)}",
+                       primary_empresa)
+    return {"message": "Empresas asignadas", "empresa_id": primary_empresa, "empresas": empresa_ids}
+
 @api_router.put("/superadmin/users/{user_id}/permissions")
 async def sa_set_permissions(user_id: str, input: UpdatePermissionsInput, admin: dict = Depends(require_super_admin)):
     await db.doctors.update_one({"id": user_id}, {"$set": {"permissions": input.permissions}})
@@ -1111,6 +1210,9 @@ async def get_all_users(admin: dict = Depends(require_admin_or_super)):
             u['created_at'] = datetime.fromisoformat(u['created_at'])
         eid = u.get("empresa_id")
         u["empresa"] = empresa_map.get(eid) if eid else None
+        u["empresas_detalle"] = [
+            empresa_map[eid] for eid in (u.get("empresas") or []) if eid in empresa_map
+        ]
     return users
 
 @api_router.get("/admin/pending-users")
@@ -1125,6 +1227,9 @@ async def get_pending_users(admin: dict = Depends(require_admin_or_super)):
             u['created_at'] = datetime.fromisoformat(u['created_at'])
         eid = u.get("empresa_id")
         u["empresa"] = empresa_map.get(eid) if eid else None
+        u["empresas_detalle"] = [
+            empresa_map[eid] for eid in (u.get("empresas") or []) if eid in empresa_map
+        ]
     return users
 
 @api_router.put("/admin/users/{uid}/approve")
@@ -1155,7 +1260,7 @@ async def reject_user(uid: str, admin: dict = Depends(require_admin_or_super)):
 
 @api_router.put("/admin/users/{uid}/change-password")
 async def admin_change_password(uid: str, input: AdminChangePassword, admin: dict = Depends(require_admin_or_super)):
-    target = await db.doctors.find_one({"id": uid}, {"_id": 0, "id": 1, "role": 1, "name": 1})
+    target = await db.doctors.find_one({"id": uid}, {"_id": 0, "id": 1, "role": 1, "name": 1, "permissions": 1})
     if not target:
         raise HTTPException(404, "Usuario no encontrado")
     # Permitir cambiarse a uno mismo la contraseña pasa por /auth/change-password.
@@ -1164,11 +1269,71 @@ async def admin_change_password(uid: str, input: AdminChangePassword, admin: dic
     await db.doctors.update_one({"id": uid}, {"$set": {"password": hash_password(input.new_password)}})
     return {"message": "Contraseña actualizada"}
 
+@api_router.put("/admin/users/{uid}")
+async def update_user_full(uid: str, input: AdminUserUpdate, admin: dict = Depends(require_admin_or_super)):
+    target = await db.doctors.find_one({"id": uid}, {"_id": 0, "id": 1, "role": 1, "name": 1, "email": 1, "permissions": 1})
+    if not target:
+        raise HTTPException(404, "Usuario no encontrado")
+    assert_can_manage_target(admin, target, "modificar")
+
+    data = {}
+    if input.name is not None:
+        data["name"] = input.name.strip()
+    if input.email is not None:
+        email = str(input.email).strip().lower()
+        existing = await db.doctors.find_one({"email": email, "id": {"$ne": uid}}, {"_id": 0, "id": 1})
+        if existing:
+            raise HTTPException(400, "Ya existe un usuario con ese email")
+        data["email"] = email
+    if input.password:
+        if len(input.password) < 6:
+            raise HTTPException(400, "La contraseña debe tener al menos 6 caracteres")
+        data["password"] = hash_password(input.password)
+    if input.specialty is not None:
+        data["specialty"] = input.specialty
+    if input.license_number is not None:
+        data["license_number"] = input.license_number
+    if input.role is not None and input.role != target.get("role"):
+        valid_roles = ['coordinador', 'doctor']
+        if admin.get('role') == 'super_admin':
+            valid_roles.extend(['admin', 'super_admin'])
+        if input.role not in valid_roles:
+            raise HTTPException(400, "Rol inválido")
+        assert_can_change_role(admin, target, input.role)
+        data["role"] = input.role
+        if input.role == "coordinador" and not target.get("permissions"):
+            data["permissions"] = PERMISOS_DEFAULT_COORDINADOR
+        elif input.role == "doctor" and not target.get("permissions"):
+            data["permissions"] = PERMISOS_DEFAULT_DOCTOR
+    if input.permissions is not None:
+        next_role = data.get("role", target.get("role"))
+        if next_role in ["doctor", "coordinador"]:
+            data["permissions"] = input.permissions
+    if input.empresa_ids is not None:
+        if admin.get("role") != "super_admin":
+            raise HTTPException(403, "Solo Super Administrador puede asignar múltiples empresas")
+        empresa_ids = list(dict.fromkeys([eid for eid in input.empresa_ids if eid]))
+        if data.get("role", target.get("role")) != "super_admin" and not empresa_ids:
+            raise HTTPException(400, "Seleccioná al menos una empresa")
+        if empresa_ids:
+            count = await db.empresas.count_documents({"id": {"$in": empresa_ids}})
+            if count != len(empresa_ids):
+                raise HTTPException(404, "Una o más empresas no existen")
+        data["empresas"] = empresa_ids
+        data["empresa_id"] = empresa_ids[0] if empresa_ids else None
+
+    if not data:
+        raise HTTPException(400, "Sin datos")
+    await db.doctors.update_one({"id": uid}, {"$set": data})
+    await log_activity(admin['id'], admin['name'], "update", "user", uid, f"Usuario actualizado: {target.get('name')}",
+                       get_user_empresa_id(admin))
+    return {"message": "Usuario actualizado"}
+
 @api_router.put("/admin/users/{uid}/role")
 async def change_role(uid: str, role: str, admin: dict = Depends(require_admin_or_super)):
-    valid_roles = ['admin', 'doctor']
+    valid_roles = ['coordinador', 'doctor']
     if admin.get('role') == 'super_admin':
-        valid_roles.append('super_admin')
+        valid_roles.extend(['admin', 'super_admin'])
     if role not in valid_roles:
         raise HTTPException(400, "Rol inválido")
     target = await db.doctors.find_one({"id": uid}, {"_id": 0, "id": 1, "role": 1, "name": 1})
@@ -1176,7 +1341,12 @@ async def change_role(uid: str, role: str, admin: dict = Depends(require_admin_o
         raise HTTPException(404, "Usuario no encontrado")
     # Permisos verticales: no auto-cambio de rol y no cambiar a iguales/superiores
     assert_can_change_role(admin, target, role)
-    await db.doctors.update_one({"id": uid}, {"$set": {"role": role}})
+    update_data = {"role": role}
+    if role == "coordinador" and not target.get("permissions"):
+        update_data["permissions"] = PERMISOS_DEFAULT_COORDINADOR
+    elif role == "doctor" and not target.get("permissions"):
+        update_data["permissions"] = PERMISOS_DEFAULT_DOCTOR
+    await db.doctors.update_one({"id": uid}, {"$set": update_data})
     await log_activity(admin['id'], admin['name'], "update", "user", uid, f"Rol cambiado a {role}",
                        get_user_empresa_id(admin))
     return {"message": f"Rol cambiado a {role}"}
@@ -1209,9 +1379,9 @@ async def admin_create_user(input: dict, admin: dict = Depends(require_admin_or_
         raise HTTPException(400, "La contraseña debe tener al menos 6 caracteres")
 
     # Validar rol
-    valid_roles = ['doctor', 'admin']
+    valid_roles = ['doctor', 'coordinador']
     if admin.get('role') == 'super_admin':
-        valid_roles.append('super_admin')
+        valid_roles.extend(['admin', 'super_admin'])
     if role not in valid_roles:
         raise HTTPException(400, f"Rol inválido. Valores posibles: {valid_roles}")
 
@@ -1233,7 +1403,11 @@ async def admin_create_user(input: dict, admin: dict = Depends(require_admin_or_
         "role": role,
         "empresa_id": empresa_id,
         "empresas": [empresa_id] if empresa_id else [],
-        "permissions": PERMISOS_DEFAULT_DOCTOR if role == "doctor" else {},
+        "permissions": (
+            PERMISOS_DEFAULT_COORDINADOR if role == "coordinador"
+            else PERMISOS_DEFAULT_DOCTOR if role == "doctor"
+            else {}
+        ),
         "status": "active",   # creado directo → activo
         "specialty": input.get("specialty", ""),
         "license_number": input.get("license_number", ""),

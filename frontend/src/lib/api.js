@@ -2,13 +2,15 @@ import axios from 'axios';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
+export const CLINIC_TOKEN_KEY = 'arandu_clinic_token';
+export const CLINIC_DOCTOR_KEY = 'arandu_clinic_doctor';
 
 // Timeout global: si el backend o el proxy no responden, axios corta a los 30s
 // y el formulario muestra un error en vez de quedar el spinner girando para siempre.
 axios.defaults.timeout = 30000;
 
 const getAuthHeader = () => {
-  const token = localStorage.getItem('token');
+  const token = localStorage.getItem(CLINIC_TOKEN_KEY);
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
@@ -118,6 +120,11 @@ export const api = {
         { empresa_id }, { headers: getAuthHeader() });
       return r.data;
     },
+    assignEmpresas: async (userId, empresa_ids) => {
+      const r = await axios.put(`${API}/superadmin/users/${userId}/empresas`,
+        { empresa_ids }, { headers: getAuthHeader() });
+      return r.data;
+    },
     setPermissions: async (userId, permissions) => {
       const r = await axios.put(`${API}/superadmin/users/${userId}/permissions`,
         { permissions }, { headers: getAuthHeader() });
@@ -160,6 +167,10 @@ export const api = {
     },
     createUser: async (data) => {
       const r = await axios.post(`${API}/admin/users/create`, data, { headers: getAuthHeader() });
+      return r.data;
+    },
+    updateUser: async (uid, data) => {
+      const r = await axios.put(`${API}/admin/users/${uid}`, data, { headers: getAuthHeader() });
       return r.data;
     },
     toggleUserStatus: async (uid) => {

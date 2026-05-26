@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { api } from '../lib/api';
+import { api, CLINIC_TOKEN_KEY } from '../lib/api';
 
 const EmpresaContext = createContext(null);
 export const useEmpresa = () => useContext(EmpresaContext);
@@ -72,7 +72,7 @@ export const EmpresaProvider = ({ children }) => {
     setLoadingEmpresa(true);
     try {
       const result = await api.auth.switchEmpresa(empresaId);
-      localStorage.setItem('token', result.token);
+      localStorage.setItem(CLINIC_TOKEN_KEY, result.token);
       setAndApplyEmpresa(result.empresa);
       return result;
     } finally {

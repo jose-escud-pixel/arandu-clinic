@@ -11,11 +11,11 @@ import AdminPage from './pages/AdminPage';
 import ProfilePage from './pages/ProfilePage';
 import ActivityLogPage from './pages/ActivityLogPage';
 import Layout from './components/Layout';
-import { api } from './lib/api';
+import { api, CLINIC_TOKEN_KEY, CLINIC_DOCTOR_KEY } from './lib/api';
 import { EmpresaProvider, useEmpresa } from './context/EmpresaContext';
 
 function AppRoutes() {
-  const [token, setToken] = useState(localStorage.getItem('token'));
+  const [token, setToken] = useState(localStorage.getItem(CLINIC_TOKEN_KEY));
   const [doctor, setDoctor] = useState(null);
   const [empresasList, setEmpresasList] = useState([]);
   const { applyFromUser, setEmpresa, resetTheme } = useEmpresa();
@@ -34,17 +34,23 @@ function AppRoutes() {
 
   // Al arrancar: restaurar sesión desde localStorage
   useEffect(() => {
-    const storedToken = localStorage.getItem('token');
-    const storedDoctor = localStorage.getItem('doctor');
+    const storedToken = localStorage.getItem(CLINIC_TOKEN_KEY);
+    const storedDoctor = localStorage.getItem(CLINIC_DOCTOR_KEY);
     if (storedToken && storedDoctor) {
       setToken(storedToken);
-      const parsedDoc = JSON.parse(storedDoctor);
+      let parsedDoc = null;
+      try {
+        parsedDoc = JSON.parse(storedDoctor);
+      } catch {
+        handleLogout();
+        return;
+      }
       setDoctor(parsedDoc);
       // Refrescar datos del usuario desde el servidor y aplicar tema
       api.auth.me()
         .then(freshData => {
           setDoctor(freshData);
-          localStorage.setItem('doctor', JSON.stringify(freshData));
+          localStorage.setItem(CLINIC_DOCTOR_KEY, JSON.stringify(freshData));
           applyFromUser(freshData);
           // Cargar la lista de empresas después de conocer el usuario actual
           loadEmpresasList();
@@ -57,23 +63,23 @@ function AppRoutes() {
   }, []); // eslint-disable-line
 
   const handleLogin = (newToken, doctorData, empresasData) => {
-  	localStorage.setItem('token', newToken);
-  	localStorage.setItem('doctor', JSON.stringify(doctorData));
+  	localStorage.setItem(CLINIC_TOKEN_KEY, newToken);
+  	localStorage.setItem(CLINIC_DOCTOR_KEY, JSON.stringify(doctorData));
   	setToken(newToken);
   	setDoctor(doctorData);
   
   	// Guardar lista de empresas
   	if (empresasData && empresasData.length > 0) {
     		setEmpresasList(empresasData);
-    
-    		// 🔥 FIX: Si es admin/doctor y tiene UNA sola empresa, aplicarla automáticamente
-    		if (doctorData.role !== 'super_admin' && empresasData.length === 1) {
-      			// Crear un objeto doctor con la empresa activa
+    		if (doctorData.role !== 'super_admin') {
+      			const activeEmpresa = empresasData.find(emp => emp.id === doctorData.empresa_id) || empresasData[0];
       			const doctorWithEmpresa = {
         			...doctorData,
-        			empresa: empresasData[0],
-        			current_empresa_id: empresasData[0].id
+        			empresa: activeEmpresa,
+        			current_empresa_id: activeEmpresa.id
       			};
+      			setDoctor(doctorWithEmpresa);
+      			localStorage.setItem(CLINIC_DOCTOR_KEY, JSON.stringify(doctorWithEmpresa));
       			applyFromUser(doctorWithEmpresa);
     		} else {
       			applyFromUser(doctorData);
@@ -85,6 +91,8 @@ function AppRoutes() {
   };
 
   const handleLogout = () => {
+    localStorage.removeItem(CLINIC_TOKEN_KEY);
+    localStorage.removeItem(CLINIC_DOCTOR_KEY);
     localStorage.removeItem('token');
     localStorage.removeItem('doctor');
     setToken(null);
@@ -95,8 +103,8 @@ function AppRoutes() {
 
   // Se llama desde Layout cuando el usuario elige otra empresa en el dropdown
   const handleEmpresaSwitch = (newToken, newDoctor, nuevaEmpresa) => {
-    localStorage.setItem('token', newToken);
-    localStorage.setItem('doctor', JSON.stringify(newDoctor));
+    localStorage.setItem(CLINIC_TOKEN_KEY, newToken);
+    localStorage.setItem(CLINIC_DOCTOR_KEY, JSON.stringify(newDoctor));
     setToken(newToken);
     setDoctor({ ...newDoctor, empresa: nuevaEmpresa });
     setEmpresa(nuevaEmpresa);
@@ -125,7 +133,9 @@ function AppRoutes() {
           <Route path="patients/:patientId" element={<PatientDetail />} />
           <Route path="appointments" element={<AppointmentsPage />} />
           <Route path="statistics" element={<AdvancedStatsPage />} />
-          <Route path="admin" element={<AdminPage doctor={doctor} />} />
+          <Route path="users" element={<AdminPage doctor={doctor} mode="users" />} />
+          <Route path="my-companies" element={<AdminPage doctor={doctor} mode="empresas" />} />
+          <Route path="admin" element={<Navigate to="/users" replace />} />
           <Route path="activity-log" element={<ActivityLogPage doctor={doctor} />} />
           <Route path="profile" element={<ProfilePage doctor={doctor} onUpdate={setDoctor} />} />
         </Route>

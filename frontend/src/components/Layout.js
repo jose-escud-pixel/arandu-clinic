@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import {
-  Home, Users, Calendar, LogOut, BarChart3, Shield, User,
-  Menu, X, Activity, Bell, Building2, ChevronDown, Check
+  Home, Users, Calendar, LogOut, BarChart3, User,
+  Menu, X, Bell, Building2, ChevronDown, Check
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { useEmpresa } from '../context/EmpresaContext';
@@ -20,6 +20,10 @@ const Layout = ({ doctor, onLogout, empresasList = [], onSwitchEmpresa }) => {
   const [showNotifs, setShowNotifs] = useState(false);
   const [switching, setSwitching] = useState(false);
   const { empresa, labels, switchEmpresa } = useEmpresa();
+  const roleLabel = doctor?.role === 'super_admin' ? 'Super Admin'
+    : doctor?.role === 'admin' ? 'Admin del sitio'
+    : doctor?.role === 'coordinador' ? 'Coordinador clínico'
+    : labels.profesional;
 
   useEffect(() => {
     api.notifications.getAll().then(setNotifs).catch(() => {});
@@ -57,8 +61,8 @@ const Layout = ({ doctor, onLogout, empresasList = [], onSwitchEmpresa }) => {
     ...(hasPerm('citas.ver') ? [{ to: '/appointments', icon: Calendar, label: 'Citas', testId: 'nav-appointments' }] : []),
     ...(hasPerm('estadisticas.ver') ? [{ to: '/statistics', icon: BarChart3, label: 'Estadísticas', testId: 'nav-statistics' }] : []),
     ...(isAdmin ? [
-      { to: '/admin', icon: Shield, label: 'Administrador', testId: 'nav-admin' },
-      { to: '/activity-log', icon: Activity, label: 'Log Actividad', testId: 'nav-activity-log' },
+      { to: '/users', icon: Users, label: 'Usuarios', testId: 'nav-users' },
+      { to: '/my-companies', icon: Building2, label: 'Mis empresas', testId: 'nav-my-companies' },
     ] : []),
     { to: '/profile', icon: User, label: 'Mi Perfil', testId: 'nav-profile' },
   ];
@@ -67,7 +71,7 @@ const Layout = ({ doctor, onLogout, empresasList = [], onSwitchEmpresa }) => {
 
   const currentEmpresaName = empresa?.nombre || labels.nombreEmpresa || 'Arandu Clinic';
   const currentEmpresaLogo = empresa?.logo_url || null;
-  const canSwitchEmpresa = isSuperAdmin;
+  const canSwitchEmpresa = isSuperAdmin || empresasList.length > 1;
   
   return (
     <div className="min-h-screen bg-background">
@@ -234,9 +238,7 @@ const Layout = ({ doctor, onLogout, empresasList = [], onSwitchEmpresa }) => {
               <p className="text-xs text-muted-foreground truncate">{doctor?.email}</p>
               <span className="inline-block text-xs bg-primary/10 text-primary rounded-full px-2 py-0.5 mt-0.5"
                     style={{ backgroundColor: 'var(--empresa-primary-10)', color: 'var(--empresa-primary)' }}>
-                {doctor?.role === 'super_admin' ? 'Super Admin'
-                 : doctor?.role === 'admin' ? 'Admin'
-                 : labels.profesional}
+                {roleLabel}
               </span>
             </div>
           </div>

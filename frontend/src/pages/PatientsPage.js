@@ -264,7 +264,7 @@ const PatientModal = ({ patient, onClose, onSaved, labels }) => {
 /* ─── Componente principal ────────────────────────────── */
 const PatientsPage = ({ doctor }) => {
   const { labels } = useEmpresa();
-  const isPrivileged = doctor?.role === 'super_admin' || doctor?.role === 'admin';
+  const isPrivileged = ['super_admin', 'admin', 'coordinador'].includes(doctor?.role);
 
   const [patients,    setPatients]    = useState([]);
   const [doctors,     setDoctors]     = useState([]);
